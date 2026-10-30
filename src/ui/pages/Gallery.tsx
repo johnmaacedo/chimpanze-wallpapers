@@ -6,7 +6,7 @@ import { Tile } from '../components/Tile';
 import { Lightbox } from '../components/Lightbox';
 import { Btn, Segmented } from '../components/controls';
 
-export function GalleryPage({ onAnimate }: { onAnimate: (p: string) => void }) {
+export function GalleryPage({ onEdit }: { onEdit: (p: string) => void }) {
   const { state, mediaVersion, toast } = useStore();
   const folders = useMemo(() => {
     if (!state) return [] as { folder: string; label: string; monitors: number[] }[];
@@ -20,7 +20,7 @@ export function GalleryPage({ onAnimate }: { onAnimate: (p: string) => void }) {
   }, [state]);
   const [folder, setFolder] = useState<string | null>(null);
   const [items, setItems] = useState<MediaItem[] | null>(null);
-  const [filter, setFilter] = useState<'all' | 'image' | 'anim' | 'nok'>('all');
+  const [filter, setFilter] = useState<'all' | 'image' | 'anim' | 'nok' | 'ed'>('all');
   const [q, setQ] = useState('');
   const [open, setOpen] = useState<number | null>(null);
 
@@ -34,7 +34,7 @@ export function GalleryPage({ onAnimate }: { onAnimate: (p: string) => void }) {
   }, [folder, mediaVersion]);
 
   const shown = useMemo(() => (items || []).filter((i) =>
-    (filter === 'all' || (filter === 'image' && i.type === 'image') || (filter === 'anim' && i.type !== 'image') || (filter === 'nok' && i.type === 'image' && !i.upscaled)) &&
+    (filter === 'all' || (filter === 'image' && i.type === 'image') || (filter === 'anim' && i.type !== 'image') || (filter === 'nok' && i.type === 'image' && !i.upscaled) || (filter === 'ed' && !!i.edited)) &&
     (!q || i.name.toLowerCase().includes(q.toLowerCase()))), [items, filter, q]);
 
   const currents = new Set(state ? Object.values(state.config.monitors).map((c) => c.fixed || c.current) : []);
@@ -74,7 +74,7 @@ export function GalleryPage({ onAnimate }: { onAnimate: (p: string) => void }) {
           <Search size={15} style={{ position: 'absolute', left: 11, color: 'var(--muted)' }} />
           <input className="input" placeholder="Buscar pelo nome" value={q} onChange={(e) => setQ(e.target.value)} style={{ paddingLeft: 32, width: 200 }} />
         </div>
-        <Segmented value={filter} onChange={setFilter} options={[{ value: 'all', label: 'Tudo' }, { value: 'image', label: 'Estáticos' }, { value: 'anim', label: 'Animados' }, { value: 'nok', label: 'Sem 4K' }]} />
+        <Segmented value={filter} onChange={setFilter} options={[{ value: 'all', label: 'Tudo' }, { value: 'image', label: 'Estáticos' }, { value: 'anim', label: 'Animados' }, { value: 'nok', label: 'Sem 4K' }, { value: 'ed', label: 'Editados' }]} />
       </div>
 
       {!folder ? (
@@ -97,7 +97,7 @@ export function GalleryPage({ onAnimate }: { onAnimate: (p: string) => void }) {
       <div className="muted small" style={{ marginTop: 14 }}>{items ? `${shown.length} de ${items.length} arquivos` : 'Carregando…'}</div>
 
       <AnimatePresence>
-        {open !== null && <Lightbox items={shown} index={open} onIndex={setOpen} onClose={() => setOpen(null)} onAnimate={(p) => { setOpen(null); onAnimate(p); }} />}
+        {open !== null && <Lightbox items={shown} index={open} onIndex={setOpen} onClose={() => setOpen(null)} onEdit={(p) => { setOpen(null); onEdit(p); }} />}
       </AnimatePresence>
     </div>
   );

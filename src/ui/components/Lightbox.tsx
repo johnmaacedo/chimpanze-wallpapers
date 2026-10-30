@@ -1,10 +1,10 @@
 import { motion } from 'motion/react';
 import { useEffect, useState } from 'react';
-import { X, Pin, Play, Sparkles, FolderSearch, Wand2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { X, Pin, Play, Sparkles, FolderSearch, WandSparkles, ChevronLeft, ChevronRight } from 'lucide-react';
 import { api, useStore, mediaUrl, fmtBytes, type MediaItem } from '../api';
 import { Btn } from './controls';
 
-export function Lightbox({ items, index, onClose, onIndex, onAnimate }: { items: MediaItem[]; index: number; onClose: () => void; onIndex: (i: number) => void; onAnimate?: (path: string) => void }) {
+export function Lightbox({ items, index, onClose, onIndex, onEdit }: { items: MediaItem[]; index: number; onClose: () => void; onIndex: (i: number) => void; onEdit?: (path: string) => void }) {
   const { state, toast } = useStore();
   const item = items[index];
   const [size, setSize] = useState<{ width: number; height: number } | null>(null);
@@ -53,7 +53,7 @@ export function Lightbox({ items, index, onClose, onIndex, onAnimate }: { items:
             </div>
           ) : item.type === 'video'
             ? <video key={item.path} src={mediaUrl(item.path)} autoPlay muted loop controls={false} />
-            : <motion.img key={item.path} src={mediaUrl(item.upscaled || item.path)} alt="" initial={{ opacity: 0, scale: 1.02 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.4 }} />}
+            : <motion.img key={item.path} src={mediaUrl(item.edited || item.upscaled || item.path)} alt="" initial={{ opacity: 0, scale: 1.02 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.4 }} />}
           <button className="btn icon" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', background: 'rgba(0,0,0,.5)' }} onClick={() => onIndex(Math.max(0, index - 1))} aria-label="Anterior"><ChevronLeft size={18} /></button>
           <button className="btn icon" style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'rgba(0,0,0,.5)' }} onClick={() => onIndex(Math.min(items.length - 1, index + 1))} aria-label="Próxima"><ChevronRight size={18} /></button>
         </div>
@@ -66,6 +66,7 @@ export function Lightbox({ items, index, onClose, onIndex, onAnimate }: { items:
             {size ? `${size.width}×${size.height}` : item.type === 'video' ? 'Vídeo' : item.type === 'gif' ? 'GIF animado' : ''}
             {item.size ? `, ${fmtBytes(item.size)}` : ''}
             {item.upscaled ? ', com versão 4K' : ''}
+            {item.edited ? ', editada' : ''}
           </div>
 
           <div className="stack" style={{ gap: 8 }}>
@@ -84,7 +85,7 @@ export function Lightbox({ items, index, onClose, onIndex, onAnimate }: { items:
             <div className="stack" style={{ gap: 8 }}>
               <Btn className="primary" onClick={upscale}><Sparkles size={15} /> {item.upscaled ? 'Refazer upscale 4K' : 'Upscale para 4K (GPU)'}</Btn>
               {item.upscaled && <Btn onClick={() => setCompare((c) => !c)}>{compare ? 'Ver imagem' : 'Comparar antes e depois'}</Btn>}
-              {onAnimate && <Btn className="ai" onClick={() => onAnimate(item.upscaled || item.path)}><Wand2 size={15} /> Animar com IA</Btn>}
+              {onEdit && <Btn className="ai" onClick={() => onEdit(item.path)}><WandSparkles size={15} /> Editar imagem</Btn>}
             </div>
           )}
           <Btn className="ghost sm" onClick={() => api.invoke('shell:reveal', item.path)}><FolderSearch size={14} /> Mostrar no Explorer</Btn>

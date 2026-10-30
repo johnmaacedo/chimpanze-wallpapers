@@ -16,6 +16,8 @@ export default defineConfig({
         index: resolve(__dirname, 'src/index.html'),
         wallpaper: resolve(__dirname, 'src/wallpaper.html'),
         overlay: resolve(__dirname, 'src/overlay.html'),
+        // Hidden page that opens every wallpaper window (they share one renderer process).
+        hub: resolve(__dirname, 'src/hub.html'),
       },
     },
   },

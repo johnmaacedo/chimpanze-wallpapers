@@ -19,7 +19,29 @@ const EASE: Record<string, (t: number) => number> = {
   easeOutExpo: (t) => (t === 1 ? 1 : 1 - Math.pow(2, -10 * t)),
   easeInOutSine: (t) => -(Math.cos(Math.PI * t) - 1) / 2,
   easeOutBack: (t) => { const c1 = 1.20158; const c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); },
+  easeOutQuart: (t) => 1 - Math.pow(1 - t, 4),
+  easeInOutExpo: (t) => (t <= 0 ? 0 : t >= 1 ? 1 : t < 0.5 ? Math.pow(2, 20 * t - 10) / 2 : (2 - Math.pow(2, -20 * t + 10)) / 2),
+  // Critically damped spring (no overshoot) and an under-damped one (small bounce).
+  spring: (t) => (t >= 1 ? 1 : (1 - (1 + 9 * t) * Math.exp(-9 * t)) / (1 - 10 * Math.exp(-9))),
+  springBounce: (t) => (t >= 1 ? 1 : 1 - Math.exp(-6.5 * t) * Math.cos(9.5 * t) + t * Math.exp(-6.5) * Math.cos(9.5)),
+  // iOS default curve: cubic-bezier(0.25, 0.1, 0.25, 1).
+  apple: (t) => cubicBezier(0.25, 0.1, 0.25, 1, t),
 };
+
+function cubicBezier(x1: number, y1: number, x2: number, y2: number, x: number) {
+  const cx = 3 * x1; const bx = 3 * (x2 - x1) - cx; const ax = 1 - cx - bx;
+  const cy = 3 * y1; const by = 3 * (y2 - y1) - cy; const ay = 1 - cy - by;
+  let t = x;
+  // Newton-Raphson on x(t) = x.
+  for (let i = 0; i < 6; i++) {
+    const err = ((ax * t + bx) * t + cx) * t - x;
+    const d = (3 * ax * t + 2 * bx) * t + cx;
+    if (Math.abs(d) < 1e-6) break;
+    t -= err / d;
+  }
+  t = Math.min(1, Math.max(0, t));
+  return ((ay * t + by) * t + cy) * t;
+}
 
 /** A decoded media source bound to a GL texture. */
 class Media {
@@ -39,7 +61,6 @@ class Media {
   private decoding = false;
   private disposed = false;
   private needsUpload = false;
-  private bitmap: ImageBitmap | null = null;
 
   constructor(private gl: WebGL2RenderingContext) {
     this.tex = gl.createTexture()!;
@@ -75,18 +96,19 @@ class Media {
     }
     const probe = await createImageBitmap(blob);
     let w = probe.width; let h = probe.height;
-    // Keep VRAM sane for 8K+ sources: ~1.5× the screen is plenty (incl. Ken Burns).
+    // Keep VRAM low: ~1.1× the screen is plenty (incl. Ken Burns); the bitmap is
+    // freed right after the upload.
     const ratio = Math.min(w / canvasW, h / canvasH);
     let bmp = probe;
-    if (ratio > 2) {
-      const f = 1.5 / ratio;
+    if (ratio > 1.25) {
+      const f = 1.1 / ratio;
       w = Math.round(w * f); h = Math.round(h * f);
-      bmp = await createImageBitmap(blob, { resizeWidth: w, resizeHeight: h, resizeQuality: 'high' });
+      bmp = await createImageBitmap(probe, { resizeWidth: w, resizeHeight: h, resizeQuality: 'high' });
       probe.close();
     }
     this.width = w; this.height = h;
-    this.bitmap = bmp;
     this.upload(bmp);
+    bmp.close();
   }
 
   private upload(src: TexImageSource) {
@@ -101,12 +123,6 @@ class Media {
     } else {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     }
-  }
-
-  setMips(on: boolean) {
-    if (on === this.mips) return;
-    this.mips = on;
-    if (this.bitmap) this.upload(this.bitmap);
   }
 
   private loadVideo(url: string): Promise<void> {
@@ -192,7 +208,6 @@ class Media {
     if (this.video) { this.video.pause(); this.video.removeAttribute('src'); this.video.load(); this.video = null; }
     if (this.frame) { try { this.frame.close(); } catch (_) { /* ignore */ } }
     if (this.decoder) { try { this.decoder.close(); } catch (_) { /* ignore */ } }
-    if (this.bitmap) { try { this.bitmap.close(); } catch (_) { /* ignore */ } }
   }
 }
 
@@ -210,6 +225,9 @@ export class Engine {
   private paused = false;
   private fit: Fit = 'cover';
   private kenBurns = true;
+  private intensity = 1;
+  /** Most recently used programs first; only a few stay compiled (GPU memory). */
+  private lru: string[] = [];
   private loadToken = 0;
   private firstFrameSent = false;
   onFirstFrame: (() => void) | null = null;
@@ -255,7 +273,7 @@ export class Engine {
 
   private program(name: string) {
     let p = this.programs.get(name);
-    if (p) return p;
+    if (p) { this.touch(name); return p; }
     const gl = this.gl;
     const compile = (type: number, src: string) => {
       const s = gl.createShader(type)!;
@@ -270,12 +288,25 @@ export class Engine {
     gl.bindAttribLocation(prog, 0, 'aPos');
     gl.linkProgram(prog);
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(`link ${name}: ${gl.getProgramInfoLog(prog)}`);
-    const names = ['uFrom', 'uTo', 'uFromSize', 'uToSize', 'uRes', 'uProgress', 'uTime', 'uSeed', 'uFit', 'uFromZoom', 'uToZoom', 'uFromPan', 'uToPan', 'uHasFrom', 'uFromMips', 'uToMips'];
+    const names = ['uFrom', 'uTo', 'uFromSize', 'uToSize', 'uRes', 'uProgress', 'uTime', 'uSeed', 'uFit', 'uFromZoom', 'uToZoom', 'uFromPan', 'uToPan', 'uHasFrom', 'uFromMips', 'uToMips', 'uIntensity'];
     const loc: Record<string, WebGLUniformLocation | null> = {};
     for (const n of names) loc[n] = gl.getUniformLocation(prog, n);
     p = { prog, loc };
     this.programs.set(name, p);
+    this.touch(name);
     return p;
+  }
+
+  private touch(name: string) {
+    this.lru = [name, ...this.lru.filter((n) => n !== name)];
+    const keep = new Set(['idle', this.transition, name]);
+    for (let i = this.lru.length - 1; i >= 0 && this.lru.length > 7; i--) {
+      const n = this.lru[i];
+      if (keep.has(n)) continue;
+      const old = this.programs.get(n);
+      if (old) { this.gl.deleteProgram(old.prog); this.programs.delete(n); }
+      this.lru.splice(i, 1);
+    }
   }
 
   /** Pre-compiles every transition so the first use is instant. */
@@ -285,11 +316,10 @@ export class Engine {
     }
   }
 
-  setSettings(s: { fit?: Fit; kenBurns?: boolean }) {
+  setSettings(s: { fit?: Fit; kenBurns?: boolean; intensity?: number }) {
     if (s.fit && s.fit in FIT_INDEX) this.fit = s.fit;
     if (typeof s.kenBurns === 'boolean') this.kenBurns = s.kenBurns;
-    const mips = this.fit === 'contain' || this.fit === 'center';
-    this.to?.setMips(mips);
+    if (typeof s.intensity === 'number' && Number.isFinite(s.intensity)) this.intensity = Math.max(0.2, Math.min(2, s.intensity));
     this.kick();
   }
 
@@ -304,7 +334,8 @@ export class Engine {
     const token = ++this.loadToken;
     const media = new Media(this.gl);
     try {
-      await media.load(msg, this.canvas.width, this.canvas.height, this.fit === 'contain' || this.fit === 'center');
+      // Mipmaps always: the blur transitions sample lower mip levels.
+      await media.load(msg, this.canvas.width, this.canvas.height, true);
     } catch (err: any) {
       media.dispose();
       this.onError?.(`Falha ao carregar ${decodeURIComponent(msg.url.split('/').pop() || '')}: ${err.message || err}`);
@@ -318,6 +349,10 @@ export class Engine {
     if (this.paused) media.setPaused(true);
     const instant = !!msg.instant || !this.from;
     this.transition = instant ? 'idle' : (msg.transition || 'fade');
+    try { this.program(this.transition); } catch (err: any) {
+      this.onError?.(String(err.message || err));
+      this.transition = instant ? 'idle' : 'fade';
+    }
     if (instant && this.from) { this.from.dispose(); this.from = null; }
     this.easing = EASE[msg.easing] || EASE.easeInOutCubic;
     this.tDuration = Math.max(150, msg.duration || 1600);
@@ -326,7 +361,7 @@ export class Engine {
     this.kick();
   }
 
-  private kick() {
+  kick() {
     if (!this.raf) this.raf = requestAnimationFrame((t) => this.frame(t));
   }
 
@@ -392,6 +427,7 @@ export class Engine {
     gl.uniform1f(L.uHasFrom, this.from ? 1 : 0);
     gl.uniform1f(L.uFromMips, fromM.mips ? 1 : 0);
     gl.uniform1f(L.uToMips, this.to.mips ? 1 : 0);
+    gl.uniform1f(L.uIntensity, this.intensity);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     if (!this.firstFrameSent) {

@@ -1,18 +1,23 @@
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ImagePlus, FolderInput, Sparkles, Cpu, X, FolderSearch, Columns2 } from 'lucide-react';
-import { api, useStore, mediaUrl, fileName, type Job, type MediaItem } from '../api';
+import { ImagePlus, FolderInput, Cpu, X, FolderSearch, Columns2 } from 'lucide-react';
+import { api, useStore, mediaUrl, fileName, type MediaItem } from '../api';
 import { Btn, Segmented, SwitchRow } from '../components/controls';
+import { ZoomView } from '../components/ZoomView';
 
 export function UpscalePage() {
   const { state, setGlobal, jobs, toast } = useStore();
   const [models, setModels] = useState<Record<string, { label: string; kind: string }>>({});
-  const [compare, setCompare] = useState<Job | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
   useEffect(() => { api.invoke('upscale:models').then(setModels).catch(() => {}); }, []);
   if (!state) return null;
   const u = state.config.global.upscale;
   const set = (patch: Partial<typeof u>) => setGlobal({ upscale: patch });
-  const upJobs = jobs.filter((j) => j.kind === 'upscale');
+  // Images saved from the ChatGPT window are listed under Tarefas only.
+  const upJobs = jobs.filter((j) => j.kind === 'upscale' && !(j.meta && j.meta.chatgpt));
+  const shown = upJobs.find((j) => j.id === selected) || upJobs[0] || null;
+  const source: string | undefined = shown?.meta?.file;
+  const output: string | null = shown && shown.status === 'done' && shown.result && !shown.result.skipped ? shown.result.output : null;
 
   const addFiles = async () => {
     const files = await api.invoke<string[]>('dialog:files', { title: 'Imagens para upscale', multi: true });
@@ -27,7 +32,6 @@ export function UpscalePage() {
     await api.invoke('upscale:start', list, {});
     toast({ kind: 'info', title: `${list.length} imagens na fila`, message: 'Processadas uma por vez na GPU.' });
   };
-  const byKind = (k: string) => Object.entries(models).filter(([, m]) => m.kind === k || (k === 'photo' && m.kind === 'photo'));
 
   return (
     <div className="page">
@@ -44,6 +48,19 @@ export function UpscalePage() {
 
       {!state.tools.upscaler && state.platform === 'win32' && (
         <div className="panel" style={{ borderColor: 'rgba(255,107,107,.4)', marginBottom: 18 }}>O executável do upscaler não foi encontrado. Reinstale o app.</div>
+      )}
+
+      {shown && source && (
+        <div className="panel" style={{ marginBottom: 18 }}>
+          <h3>
+            {output ? 'Antes e depois' : 'Pré-visualização'}{' '}
+            <span className="sub">{fileName(source)}{output ? ` → ${shown.result.width}×${shown.result.height}` : shown.status === 'running' ? ` (${Math.round(shown.progress * 100)}%)` : ''}</span>
+          </h3>
+          <ZoomView key={shown.id} before={mediaUrl(source)} after={output ? mediaUrl(output) : null} labels={['Original', 'Upscale']} minHeight={460} />
+          <p className="muted small" style={{ margin: '8px 0 0' }}>
+            Roda do mouse dá zoom onde o cursor está, arrastar move a imagem, duplo clique alterna entre ajustar e 100%. {output ? 'Arraste a barra branca para comparar.' : ''}
+          </p>
+        </div>
       )}
 
       <div className="monitor-grid" style={{ marginTop: 0 }}>
@@ -84,7 +101,8 @@ export function UpscalePage() {
         {!upJobs.length && <div className="muted">Nenhum upscale ainda. Escolha imagens ou uma pasta.</div>}
         <AnimatePresence initial={false}>
           {upJobs.slice(0, 40).map((j) => (
-            <motion.div key={j.id} className="job" layout initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }}>
+            <motion.div key={j.id} className={`job ${shown && shown.id === j.id ? 'sel' : ''}`} layout onClick={() => setSelected(j.id)} style={{ cursor: 'pointer' }}
+              initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }}>
               <div className="top">
                 <div className="grow" style={{ minWidth: 0 }}>
                   <div className="t ellipsis">{j.title}</div>
@@ -96,7 +114,7 @@ export function UpscalePage() {
                 </div>
                 {j.status === 'done' && j.result && j.result.output && (
                   <>
-                    <Btn className="sm icon" title="Comparar" onClick={() => setCompare(j)}><Columns2 size={14} /></Btn>
+                    <Btn className="sm icon" title="Comparar" onClick={() => setSelected(j.id)}><Columns2 size={14} /></Btn>
                     <Btn className="sm icon" title="Mostrar no Explorer" onClick={() => api.invoke('shell:reveal', j.result.output)}><FolderSearch size={14} /></Btn>
                   </>
                 )}
@@ -107,10 +125,6 @@ export function UpscalePage() {
           ))}
         </AnimatePresence>
       </div>
-
-      <AnimatePresence>
-        {compare && <CompareModal job={compare} onClose={() => setCompare(null)} />}
-      </AnimatePresence>
     </div>
   );
 }
@@ -124,28 +138,5 @@ function ModelSelect({ label, value, models, onChange, kinds }: { label: string;
         {opts.map(([k, m]) => <option key={k} value={k}>{m.label}</option>)}
       </select>
     </div>
-  );
-}
-
-function CompareModal({ job, onClose }: { job: Job; onClose: () => void }) {
-  const [cut, setCut] = useState(50);
-  const src = job.meta?.file as string;
-  return (
-    <motion.div className="scrim" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}>
-      <motion.div className="lightbox" style={{ gridTemplateColumns: '1fr' }} initial={{ scale: 0.95 }} animate={{ scale: 1 }} onClick={(e) => e.stopPropagation()}>
-        <div className="view" style={{ minHeight: '78vh' }}>
-          <div className="compare" style={{ ['--cut' as any]: `${cut}%`, position: 'absolute', inset: 0 }}
-            onMouseMove={(e) => { const r = (e.currentTarget as HTMLDivElement).getBoundingClientRect(); setCut(((e.clientX - r.left) / r.width) * 100); }}>
-            <img src={mediaUrl(src)} alt="" />
-            <img className="after" src={mediaUrl(job.result.output)} alt="" />
-            <div className="handle" />
-            <span className="lab" style={{ left: 12 }}>Original</span>
-            <span className="lab" style={{ right: 12 }}><Sparkles size={11} style={{ verticalAlign: -1 }} /> {job.result.width}×{job.result.height}</span>
-          </div>
-          <button className="btn icon" style={{ position: 'absolute', right: 12, top: 12 }} onClick={onClose} aria-label="Fechar"><X size={16} /></button>
-          <div className="muted small" style={{ position: 'absolute', left: 12, bottom: 12 }}>{fileName(src)}</div>
-        </div>
-      </motion.div>
-    </motion.div>
   );
 }

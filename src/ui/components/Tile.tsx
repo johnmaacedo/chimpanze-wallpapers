@@ -15,7 +15,7 @@ export function Tile({ item, onOpen, current, index }: { item: MediaItem; onOpen
     io.observe(el);
     return () => io.disconnect();
   }, []);
-  const thumb = useThumb(visible ? item.path : null);
+  const thumb = useThumb(visible ? item.edited || item.path : null);
   const animated = item.type !== 'image';
   return (
     <motion.div
@@ -40,6 +40,7 @@ export function Tile({ item, onOpen, current, index }: { item: MediaItem; onOpen
       <div className="badges">
         {current && <span className="badge cur">No ar</span>}
         {item.upscaled && <span className="badge k4"><Sparkles size={10} /> 4K</span>}
+        {item.edited && <span className="badge ed">Editado</span>}
         {animated && <span className="badge anim"><Film size={10} /> {item.type === 'gif' ? 'GIF' : 'Vídeo'}</span>}
       </div>
       <div className="meta ellipsis">{item.name}</div>
