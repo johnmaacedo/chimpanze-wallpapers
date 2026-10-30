@@ -1,19 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion, MotionConfig } from 'motion/react';
 import {
-  MonitorSmartphone, Images, Clapperboard, Sparkles, Settings2, Minus, Square, X, PanelBottomClose, Eye, Pause, Play,
+  MonitorSmartphone, Images, Palette, Sparkles, Settings2, Minus, Square, X, PanelBottomClose, Eye, Pause, Play,
   CheckCircle2, AlertTriangle, XCircle, Info, ListTodo, SkipForward, Maximize2, FolderOpen,
 } from 'lucide-react';
 import { api, StoreCtx, useStore, useStoreValue, useThumb, folderName, type Toast } from './api';
 import { MonitorsPage } from './pages/Monitors';
 import { GalleryPage } from './pages/Gallery';
-import { AnimatedPage } from './pages/Animated';
+import { EditorPage } from './pages/Editor';
 import { UpscalePage } from './pages/Upscale';
 import { SettingsPage } from './pages/Settings';
 import { Btn } from './components/controls';
 import { useCountdown } from './components/MonitorStage';
+import { ChatGptResult } from './components/ChatGptResult';
 
-type Page = 'monitors' | 'gallery' | 'animated' | 'upscale' | 'settings';
+type Page = 'monitors' | 'gallery' | 'editor' | 'upscale' | 'settings';
 
 export function App() {
   const store = useStoreValue();
@@ -34,7 +35,7 @@ function Shell() {
   const [maximized, setMaximized] = useState(false);
   const [leaving, setLeaving] = useState<null | 'hide' | 'min'>(null);
   const [peek, setPeek] = useState(false);
-  const [animateImage, setAnimateImage] = useState<string | null>(null);
+  const [editImage, setEditImage] = useState<string | null>(null);
 
   useEffect(() => {
     return api.on('window', (w: any) => {
@@ -84,7 +85,7 @@ function Shell() {
   const nav: { id: Page; label: string; icon: any; ai?: boolean }[] = [
     { id: 'monitors', label: 'Monitores', icon: MonitorSmartphone },
     { id: 'gallery', label: 'Galeria', icon: Images },
-    { id: 'animated', label: 'Animados', icon: Clapperboard, ai: true },
+    { id: 'editor', label: 'Editor', icon: Palette, ai: true },
     { id: 'upscale', label: 'Upscale 4K', icon: Sparkles },
     { id: 'settings', label: 'Ajustes', icon: Settings2 },
   ];
@@ -119,7 +120,7 @@ function Shell() {
             {page === n.id && <motion.span layoutId="nav-pill" className="pill" transition={{ type: 'spring', stiffness: 500, damping: 38 }} />}
             <n.icon size={18} />
             <span>{n.label}</span>
-            {n.ai && <span className="ai-dot" title="IA local" />}
+            {n.ai && <span className="ai-dot" title="Com IA" />}
           </motion.button>
         ))}
         <div className="nav-foot">
@@ -136,8 +137,8 @@ function Shell() {
             initial={{ opacity: 0, y: 12, filter: 'blur(4px)' }} animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }} exit={{ opacity: 0, y: -8, filter: 'blur(4px)' }}
             transition={{ duration: 0.28, ease: [0.22, 0.8, 0.25, 1] }}>
             {page === 'monitors' && <MonitorsPage selected={selected} setSelected={setSelected} />}
-            {page === 'gallery' && <GalleryPage onAnimate={(p) => { setAnimateImage(p); setPage('animated'); }} />}
-            {page === 'animated' && <AnimatedPage initialImage={animateImage} clearInitial={() => setAnimateImage(null)} />}
+            {page === 'gallery' && <GalleryPage onEdit={(p) => { setEditImage(p); setPage('editor'); }} />}
+            {page === 'editor' && <EditorPage initialPath={editImage} clearInitial={() => setEditImage(null)} />}
             {page === 'upscale' && <UpscalePage />}
             {page === 'settings' && <SettingsPage />}
           </motion.div>
@@ -147,6 +148,7 @@ function Shell() {
       <Toasts />
       <Jobs />
       <NewMonitorModal />
+      <ChatGptResult />
       <AnimatePresence>{peek && <motion.div className="peek-hint" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>Espiando o wallpaper</motion.div>}</AnimatePresence>
     </motion.div>
   );
@@ -180,7 +182,7 @@ function Jobs() {
   return (
     <>
       <div className="jobs-fab">
-        <Btn className={running ? (running.kind === 'animate' ? 'ai' : 'primary') : ''} onClick={() => setOpen((o) => !o)}>
+        <Btn className={running ? 'primary' : ''} onClick={() => setOpen((o) => !o)}>
           <ListTodo size={16} /> {active.length ? `${active.length} tarefa(s)` : 'Tarefas'}
           {running && <span style={{ fontVariantNumeric: 'tabular-nums' }}>{Math.round(running.progress * 100)}%</span>}
         </Btn>
@@ -196,13 +198,13 @@ function Jobs() {
               <motion.div key={j.id} className="job" layout>
                 <div className="top">
                   <div className="grow" style={{ minWidth: 0 }}>
-                    <div className="t ellipsis">{j.kind === 'animate' ? 'Animar: ' : j.kind === 'upscale' ? 'Upscale: ' : ''}{j.title}</div>
+                    <div className="t ellipsis">{j.kind === 'upscale' ? 'Upscale: ' : ''}{j.title}</div>
                     <div className="s ellipsis">{j.status === 'error' ? j.error : j.stage}</div>
                   </div>
                   {(j.status === 'running' || j.status === 'queued') && <Btn className="sm icon ghost" title="Cancelar" onClick={() => api.invoke('jobs:cancel', j.id)}><X size={14} /></Btn>}
                   {j.status === 'done' && j.result?.output && <Btn className="sm icon ghost" title="Mostrar no Explorer" onClick={() => api.invoke('shell:reveal', j.result.output)}><FolderOpen size={14} /></Btn>}
                 </div>
-                {(j.status === 'running' || j.status === 'queued') && <div className={`bar ${j.kind === 'animate' ? 'ai' : ''}`}><i style={{ width: `${Math.round(j.progress * 100)}%` }} /></div>}
+                {(j.status === 'running' || j.status === 'queued') && <div className="bar"><i style={{ width: `${Math.round(j.progress * 100)}%` }} /></div>}
               </motion.div>
             ))}
           </motion.div>

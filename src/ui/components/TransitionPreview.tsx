@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Engine } from '../../wallpaper/engine';
-import { TRANSITION_NAMES } from '../../wallpaper/shaders';
+import { useStore, TRANSITION_LIST } from '../api';
 
 /**
  * Plays the real wallpaper shader between two images in a small canvas, so the
@@ -9,8 +9,11 @@ import { TRANSITION_NAMES } from '../../wallpaper/shaders';
 export function TransitionPreview({ a, b, transition, duration, easing, fit }: { a: string | null; b: string | null; transition: string; duration: number; easing: string; fit: string }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<Engine | null>(null);
-  const cfgRef = useRef({ transition, duration, easing });
-  cfgRef.current = { transition, duration, easing };
+  const { state } = useStore();
+  const off = state?.config.global.transitionsOff || [];
+  const intensity = state?.config.global.transitionIntensity ?? 1;
+  const cfgRef = useRef({ transition, duration, easing, off });
+  cfgRef.current = { transition, duration, easing, off };
 
   useEffect(() => {
     if (!ref.current) return;
@@ -21,7 +24,7 @@ export function TransitionPreview({ a, b, transition, duration, easing, fit }: {
     return () => { engine.destroy(); engineRef.current = null; };
   }, []);
 
-  useEffect(() => { engineRef.current?.setSettings({ fit: fit as any, kenBurns: false }); }, [fit]);
+  useEffect(() => { engineRef.current?.setSettings({ fit: fit as any, kenBurns: false, intensity }); }, [fit, intensity]);
 
   useEffect(() => {
     const engine = engineRef.current;
@@ -34,7 +37,13 @@ export function TransitionPreview({ a, b, transition, duration, easing, fit }: {
       if (!alive) return;
       flip = !flip;
       const c = cfgRef.current;
-      const name = c.transition === 'random' || c.transition === 'inherit' ? TRANSITION_NAMES[Math.floor(Math.random() * TRANSITION_NAMES.length)] : c.transition;
+      let name = c.transition;
+      if (name === 'random' || name === 'randomSoft' || name === 'inherit') {
+        // Same pool as the scheduler: "suave" = soft + motion, minus the ones turned off.
+        let pool = TRANSITION_LIST.filter((t) => (name !== 'randomSoft' || t.cat === 'soft' || t.cat === 'motion') && !c.off.includes(t.id));
+        if (!pool.length) pool = TRANSITION_LIST;
+        name = pool[Math.floor(Math.random() * pool.length)].id;
+      }
       engine.show({ url: pics[flip ? 1 : 0], type: 'image', transition: name, duration: c.duration, easing: c.easing, instant: false });
       timer = window.setTimeout(loop, c.duration + 1100);
     };

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { FolderOpen, ScanSearch, MonitorSmartphone, SkipBack, SkipForward, Pin, PinOff, Trash2, RefreshCw, Shuffle, ListOrdered, Sparkles } from 'lucide-react';
-import { api, useStore, useThumb, thumbUrl, fileName, folderName, TRANSITION_LABELS, EASING_LABELS, FIT_LABELS, type MonitorCfg, type MediaItem } from '../api';
+import { FolderOpen, ScanSearch, MonitorSmartphone, SkipBack, SkipForward, Pin, PinOff, Trash, RefreshCw, Shuffle, ListOrdered, Sparkles } from 'lucide-react';
+import { api, useStore, useThumb, thumbUrl, fileName, folderName, TRANSITION_LABELS, TRANSITION_LIST, TRANSITION_CATEGORIES, EASING_LABELS, FIT_LABELS, type MonitorCfg, type MediaItem } from '../api';
 import { MonitorStage, useCountdown } from '../components/MonitorStage';
 import { Btn, Segmented, SwitchRow, Toggle } from '../components/controls';
 import { TransitionPreview } from '../components/TransitionPreview';
@@ -61,7 +61,7 @@ function OfflinePanel({ id }: { id: string }) {
       </p>
       <div className="row">
         {cfg?.folder && <span className="muted small ellipsis grow">Pasta: {cfg.folder}</span>}
-        <Btn className="danger sm" onClick={async () => { await api.invoke('monitor:forget', id); refresh(); }}><Trash2 size={14} /> Esquecer este monitor</Btn>
+        <Btn className="danger sm" onClick={async () => { await api.invoke('monitor:forget', id); refresh(); }}><Trash size={14} /> Esquecer este monitor</Btn>
       </div>
     </div>
   );
@@ -188,10 +188,19 @@ function MonitorPanel({ id, toastErr }: { id: string; toastErr: (m: string) => v
             <button className={`trans-card random ${cfg.transition === 'inherit' ? 'on' : ''}`} onClick={() => set({ transition: 'inherit' })}>
               <span className="t"><Sparkles size={13} /> Padrão do app<br /><span style={{ fontWeight: 500, fontSize: 10.5 }}>{TRANSITION_LABELS[g.defaultTransition]}</span></span>
             </button>
-            {Object.entries(TRANSITION_LABELS).map(([k, label]) => (
-              <TransCard key={k} name={k} label={label} on={cfg.transition === k} onClick={() => set({ transition: k })} />
-            ))}
+            <TransCard name="random" label="Aleatória" on={cfg.transition === 'random'} onClick={() => set({ transition: 'random' })} />
+            <TransCard name="randomSoft" label="Aleatória suave" on={cfg.transition === 'randomSoft'} onClick={() => set({ transition: 'randomSoft' })} />
           </div>
+          {TRANSITION_CATEGORIES.map((cat) => (
+            <div key={cat.id}>
+              <div className="trans-cat">{cat.label}</div>
+              <div className="trans-grid">
+                {TRANSITION_LIST.filter((t) => t.cat === cat.id).map((t) => (
+                  <TransCard key={t.id} name={t.id} label={t.label} on={cfg.transition === t.id} onClick={() => set({ transition: t.id })} />
+                ))}
+              </div>
+            </div>
+          ))}
           <div className="row" style={{ marginTop: 16, gap: 14, flexWrap: 'wrap' }}>
             <div className="field grow" style={{ minWidth: 180 }}>
               <span className="label">Duração: {(duration / 1000).toFixed(1)} s</span>
@@ -231,7 +240,7 @@ function MonitorPanel({ id, toastErr }: { id: string; toastErr: (m: string) => v
 }
 
 function TransCard({ name, label, on, onClick }: { name: string; label: string; on: boolean; onClick: () => void }) {
-  if (name === 'random') {
+  if (name === 'random' || name === 'randomSoft') {
     return <button className={`trans-card ${on ? 'on' : ''}`} onClick={onClick} style={{ background: 'linear-gradient(135deg, #3a2a20, #24170f)' }}><span className="t"><Shuffle size={12} /> {label}</span></button>;
   }
   return (
@@ -260,6 +269,31 @@ const GLYPH_BG: Record<string, string> = {
   lightLeak: 'radial-gradient(70% 90% at 70% 30%, #ffcf6e 0, #ff6f61 30%, #2a1b12 70%)',
   chromaPunch: 'radial-gradient(circle at 48% 50%, #ff6f61 0 18%, transparent 19%), radial-gradient(circle at 52% 50%, #59d6ff 0 18%, #2a1b12 19%)',
   gridFlip: 'linear-gradient(90deg, #120c09 2px, transparent 2px) 0 0 / 22px 22px, linear-gradient(0deg, #120c09 2px, #6b4a33 2px) 0 0 / 22px 22px',
+  crossBlur: 'radial-gradient(60% 80% at 35% 50%, rgba(255,181,71,.55), transparent 70%), radial-gradient(60% 80% at 70% 50%, rgba(185,166,255,.45), #1a110c 75%)',
+  appleZoom: 'radial-gradient(circle at 50% 50%, #ffe1b0 0 10%, #8a5532 30%, #1a110c 70%)',
+  lumaReveal: 'linear-gradient(180deg, #fff1d6 0%, #b07a4c 40%, #2a1b12 100%)',
+  mistFade: 'radial-gradient(50% 40% at 30% 30%, rgba(255,240,220,.35), transparent 70%), radial-gradient(60% 50% at 70% 70%, rgba(255,240,220,.25), #2a1b12 80%)',
+  bokeh: 'radial-gradient(circle at 25% 35%, #ffcf6e 0 9%, transparent 10%), radial-gradient(circle at 65% 60%, #ff9a3d 0 12%, transparent 13%), radial-gradient(circle at 80% 25%, #ffe1b0 0 6%, #2a1b12 7%)',
+  morph: 'conic-gradient(from 200deg at 60% 40%, #6b4a33, #3d2a52, #8a5532, #6b4a33)',
+  dipBlack: 'linear-gradient(90deg, #6b4a33, #050302 50%, #8a5532)',
+  flashWhite: 'linear-gradient(90deg, #6b4a33, #fff6e8 50%, #8a5532)',
+  irisSoft: 'radial-gradient(circle at 50% 50%, #ffb547 0 18%, #6b4a33 34%, #1a110c 60%)',
+  pushLeft: 'linear-gradient(90deg, #4a3326 0 55%, rgba(0,0,0,.6) 55% 57%, #8a5532 57%)',
+  sheetUp: 'linear-gradient(180deg, #2a1b12 0 40%, #120c09 40% 42%, #8a5532 42%)',
+  elasticSwipe: 'linear-gradient(90deg, #6b4a33, #8a5532 40%, #ffb547 60%, #6b4a33)',
+  prism: 'linear-gradient(90deg, #ff6f61 0 33%, #7fe3b4 33% 66%, #59d6ff 66%)',
+  waveReveal: 'radial-gradient(120% 60% at 50% 120%, #ffb547 0 55%, #2a1b12 56%)',
+  lightSweep: 'linear-gradient(110deg, #2a1b12 0 42%, #fff1d6 50%, #6b4a33 58%)',
+  directionalWarp: 'linear-gradient(135deg, #8a5532 0 45%, #2a1b12 55%)',
+  radialSoft: 'conic-gradient(from 0deg, #ffb547 0 35%, #2a1b12 45%)',
+  cube3d: 'linear-gradient(100deg, #6b4a33 0 48%, #120c09 48% 52%, #3a2a20 52%)',
+  tilt3d: 'linear-gradient(80deg, #120c09 0 15%, #6b4a33 15% 45%, #120c09 45% 55%, #8a5532 55% 85%, #120c09 85%)',
+  doorway: 'linear-gradient(90deg, #6b4a33 0 30%, #ffb547 30% 70%, #6b4a33 70%)',
+  squircle: 'radial-gradient(closest-side, #ffb547 0 60%, #2a1b12 62%)',
+  bubbles: 'radial-gradient(circle, #ffb547 0 40%, #2a1b12 42%) 0 0 / 16px 16px',
+  crossZoom: 'radial-gradient(circle at 35% 50%, #fff1d6 0, #ff9a3d 18%, #2a1b12 60%)',
+  zoomSpin: 'conic-gradient(from 45deg, #2a1b12, #ffb547, #2a1b12, #8a5532, #2a1b12)',
+  swirlSoft: 'conic-gradient(from 0deg at 50% 50%, #3d2a52, #6b4a33, #ffb547, #3d2a52)',
 };
 
 function IntervalCustom({ value, active, onChange }: { value: number; active: boolean; onChange: (s: number) => void }) {

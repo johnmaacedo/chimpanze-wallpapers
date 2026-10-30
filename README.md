@@ -14,7 +14,7 @@ Wallpapers independentes por monitor, com transições em GPU estilo motion desi
 ## Estrutura
 ```
 electron/              processo principal — código da 1.4.0 (completo)
-src/                   interface React/TypeScript — ATENÇÃO: ainda é da 1.0.0
+src/                   interface React/TypeScript (reconstruída da 1.4.0) e motor das transições
 referencia-1.4.0-ui/   interface 1.4.0 compilada (minificada), só para consulta
 build/, resources/, assets/   ícones e logo
 ```
@@ -24,7 +24,7 @@ build/, resources/, assets/   ícones e logo
 npm install
 npm run dist:win
 ```
-Binários fora do Git (copie da instalação em `%LOCALAPPDATA%\Programs\Chimpanzé Wallpapers\resources\`):
+Binários fora do Git (copie da instalação em `%LOCALAPPDATA%\Programs\ChimpanzeWallpapers\resources\`):
 `bin/upscaler/` (realesrgan-ncnn-vulkan + modelos) e `models/lama.onnx`.
 
 ## Arquivos do usuário

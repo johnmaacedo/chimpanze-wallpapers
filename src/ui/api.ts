@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import TRANSITIONS from '../../electron/transitions.json';
 
 export interface Rect { x: number; y: number; width: number; height: number }
 export interface Monitor {
@@ -15,22 +16,25 @@ export interface MonitorCfg {
 export interface GlobalCfg {
   startWithWindows: boolean; pauseOnFullscreen: boolean; pauseOnMaximized: boolean; syncWindows: 'onExit' | 'always' | 'never';
   uiOpacity: number; reduceMotion: boolean; defaultTransition: string; transitionMs: number; easing: string; preferUpscaled: boolean;
-  animatedFolder: string;
+  /** 0.2–2: how much zoom/blur/spin the transitions use. */
+  transitionIntensity: number;
+  /** Transitions left out of the random modes. */
+  transitionsOff: string[];
+  chatgpt: { autoType?: boolean; autoSend?: boolean; newChat?: boolean };
   upscale: { mode: string; animeModel: string; photoModel: string; artModel: string; target: string; format: string; gpu: string; skipIfLarger: boolean };
-  comfy: { url: string; modelsDir: string };
-  ollama: { url: string; model: string };
+  editPresets: { name: string; adj: any }[];
   compactCorner: string; firstRunDone: boolean;
 }
 export interface SchedState { monitors: Record<string, { nextAt: number; occluded: boolean; error: string; busy: boolean; historySize: number }>; globalPaused: boolean; now: number }
 export interface AppState {
   version: string; platform: string; raisedDesktop: boolean; monitors: Monitor[]; offline: OfflineMonitor[];
   config: { global: GlobalCfg; monitors: Record<string, MonitorCfg>; migratedFrom?: string };
-  scheduler: SchedState; compact: boolean; tools: { upscaler: boolean; rife: boolean; ffmpeg: boolean; models: string[] };
+  scheduler: SchedState; compact: boolean; tools: { upscaler: boolean; models: string[] };
   logFile: string | null; migratedFrom: string | null;
 }
-export interface MediaItem { path: string; name: string; type: 'image' | 'gif' | 'video'; size?: number; mtime?: number; upscaled?: string }
+export interface MediaItem { path: string; name: string; type: 'image' | 'gif' | 'video'; size?: number; mtime?: number; upscaled?: string; edited?: string }
 export interface Job {
-  id: string; kind: 'upscale' | 'animate' | 'download'; title: string; status: 'queued' | 'running' | 'done' | 'error' | 'canceled';
+  id: string; kind: 'upscale'; title: string; status: 'queued' | 'running' | 'done' | 'error' | 'canceled';
   progress: number; stage: string; result: any; error: string; createdAt: number; meta: any;
 }
 export interface Toast { id: number; kind: 'ok' | 'warn' | 'error' | 'info'; title: string; message?: string; action?: { label: string; run: () => void } }
@@ -131,7 +135,7 @@ export function useStoreValue(): Store {
         });
         if (j.status === 'done') {
           if (j.kind === 'upscale' && j.result && j.result.skipped) toast({ kind: 'info', title: 'Upscale ignorado', message: `${j.title}: ${j.result.reason}` });
-          else toast({ kind: 'ok', title: j.kind === 'upscale' ? 'Upscale concluído' : j.kind === 'animate' ? 'Animação pronta' : 'Download concluído', message: j.title });
+          else toast({ kind: 'ok', title: j.meta && j.meta.chatgpt ? 'Imagem do ChatGPT salva' : j.kind === 'upscale' ? 'Upscale concluído' : 'Concluído', message: j.title });
         }
         if (j.status === 'error') toast({ kind: 'error', title: 'Falhou: ' + j.title, message: j.error });
       }),
@@ -183,26 +187,18 @@ export function fmtBytes(n?: number) {
   return Math.round(n / 1e3) + ' KB';
 }
 
+/** Shared with the main process (electron/transitions.json). */
+export interface TransitionInfo { id: string; label: string; cat: string }
+export const TRANSITION_LIST: TransitionInfo[] = TRANSITIONS.list;
+export const TRANSITION_CATEGORIES: { id: string; label: string }[] = TRANSITIONS.categories;
 export const TRANSITION_LABELS: Record<string, string> = {
   random: 'Aleatória',
-  fade: 'Dissolver com zoom',
-  zoomBlur: 'Mergulho com blur',
-  liquid: 'Líquido',
-  circleReveal: 'Revelação circular',
-  slices: 'Fatias',
-  glitch: 'Glitch',
-  pixelDissolve: 'Pixels',
-  softWipe: 'Cortina suave',
-  inkBleed: 'Tinta',
-  parallaxSlide: 'Deslize parallax',
-  ripple: 'Ondulação',
-  dreamWave: 'Sonho',
-  cardSwap: 'Troca de cartões',
-  lightLeak: 'Vazamento de luz',
-  chromaPunch: 'Punch cromático',
-  gridFlip: 'Mosaico giratório',
+  randomSoft: 'Aleatória suave',
+  ...Object.fromEntries(TRANSITION_LIST.map((t) => [t.id, t.label])),
 };
 export const EASING_LABELS: Record<string, string> = {
-  easeInOutCubic: 'Suave', easeInOutQuint: 'Dramática', easeOutExpo: 'Rápida e macia', easeInOutSine: 'Leve', easeOutBack: 'Com quique', linear: 'Linear',
+  apple: 'Apple (padrão iOS)', spring: 'Mola suave', springBounce: 'Mola com balanço',
+  easeInOutCubic: 'Suave', easeInOutQuint: 'Dramática', easeInOutExpo: 'Expo (cinema)', easeOutQuart: 'Desacelerar',
+  easeOutExpo: 'Rápida e macia', easeInOutSine: 'Leve', easeOutBack: 'Com quique', linear: 'Linear',
 };
 export const FIT_LABELS: Record<string, string> = { cover: 'Preencher', contain: 'Ajustar (fundo desfocado)', stretch: 'Esticar', center: 'Centralizar 1:1' };

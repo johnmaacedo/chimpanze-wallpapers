@@ -1,14 +1,18 @@
 import { useEffect, useState } from 'react';
-import { FileText, ShieldOff } from 'lucide-react';
-import { api, useStore, TRANSITION_LABELS, EASING_LABELS } from '../api';
+import { FileText, ShieldOff, MessageSquare } from 'lucide-react';
+import { api, useStore, TRANSITION_LABELS, TRANSITION_LIST, TRANSITION_CATEGORIES, EASING_LABELS } from '../api';
 import { Btn, Segmented, SwitchRow } from '../components/controls';
 
 export function SettingsPage() {
   const { state, setGlobal, toast } = useStore();
   const [legacy, setLegacy] = useState<{ present: boolean } | null>(null);
+  const [chatgpt, setChatgpt] = useState<{ installed: boolean } | null>(null);
   useEffect(() => { api.invoke('legacy:status').then(setLegacy).catch(() => {}); }, []);
+  useEffect(() => { api.invoke('chatgpt:status').then(setChatgpt).catch(() => {}); }, []);
   if (!state) return null;
   const g = state.config.global;
+  const cg = g.chatgpt || {};
+  const off = g.transitionsOff || [];
 
   return (
     <div className="page">
@@ -28,6 +32,18 @@ export function SettingsPage() {
               <Segmented value={g.syncWindows} onChange={(v) => setGlobal({ syncWindows: v })} options={[{ value: 'onExit', label: 'Atualizar ao sair' }, { value: 'always', label: 'A cada troca' }, { value: 'never', label: 'Nunca' }]} />
               <span className="hint">Ao sair do app, o último wallpaper de cada monitor fica como fundo do Windows. "A cada troca" também atualiza a tela de bloqueio, mas pode piscar em algumas versões do Windows 11.</span>
             </div>
+          </div>
+
+          <div className="panel">
+            <h3><MessageSquare size={15} style={{ verticalAlign: -2 }} /> ChatGPT (edição com IA)</h3>
+            <p className="muted small" style={{ marginTop: 0 }}>O Editor manda imagens para o aplicativo do ChatGPT instalado no PC (nunca o navegador) e recebe a imagem editada de volta, quando você baixa ou copia ela no ChatGPT.</p>
+            <dl className="kv">
+              <dt>Aplicativo</dt><dd>{chatgpt == null ? '…' : chatgpt.installed ? 'Encontrado' : 'Não instalado'}</dd>
+            </dl>
+            {chatgpt && !chatgpt.installed && <Btn className="sm" style={{ marginTop: 8 }} onClick={() => api.invoke('chatgpt:store')}>Instalar pela Microsoft Store</Btn>}
+            <SwitchRow title="Colar sozinho" desc="Depois de abrir o ChatGPT, o app cola a imagem e o pedido para você." on={cg.autoType !== false} onChange={(v) => setGlobal({ chatgpt: { autoType: v } })} />
+            <SwitchRow title="Enviar sozinho" desc="Aperta Enter no final. Desligado: você confere o pedido antes." on={cg.autoSend !== false} onChange={(v) => setGlobal({ chatgpt: { autoSend: v } })} />
+            <SwitchRow title="Começar conversa nova" desc="Abre um chat novo antes de colar (Ctrl+Shift+O)." on={cg.newChat !== false} onChange={(v) => setGlobal({ chatgpt: { newChat: v } })} />
           </div>
 
           {legacy?.present && (
@@ -61,8 +77,34 @@ export function SettingsPage() {
                   {Object.entries(EASING_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                 </select>
               </div>
+              <div className="field">
+                <span className="label">Intensidade dos efeitos: {Math.round((g.transitionIntensity ?? 1) * 100)}%</span>
+                <input type="range" min={0.3} max={1.6} step={0.05} value={g.transitionIntensity ?? 1} onChange={(e) => setGlobal({ transitionIntensity: Number(e.target.value) })} />
+                <span className="hint">Quanto zoom, desfoque, giro e brilho cada transição usa. Abaixo de 100% fica mais sutil.</span>
+              </div>
               <SwitchRow title="Reduzir movimento" desc="Troca por um fade curto e desliga o Ken Burns em todos os monitores." on={g.reduceMotion} onChange={(v) => setGlobal({ reduceMotion: v })} />
             </div>
+          </div>
+
+          <div className="panel">
+            <h3>Transições no modo aleatório</h3>
+            <p className="muted small" style={{ marginTop: 0 }}>Desmarque as que você não quer ver. "Aleatória suave" usa só Suaves e Movimento.</p>
+            {TRANSITION_CATEGORIES.map((cat) => (
+              <div key={cat.id}>
+                <div className="trans-cat">{cat.label}</div>
+                <div className="chips">
+                  {TRANSITION_LIST.filter((t) => t.cat === cat.id).map((t) => {
+                    const isOff = off.includes(t.id);
+                    return (
+                      <button key={t.id} className={`chip-t ${isOff ? '' : 'on'}`}
+                        onClick={() => setGlobal({ transitionsOff: isOff ? off.filter((x) => x !== t.id) : [...off, t.id] })}>
+                        {t.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
 
           <div className="panel">
@@ -75,14 +117,6 @@ export function SettingsPage() {
             <div className="field" style={{ marginTop: 12 }}>
               <span className="label">Canto do modo compacto</span>
               <Segmented value={g.compactCorner as any} onChange={(v) => setGlobal({ compactCorner: v })} options={[{ value: 'tl', label: 'Sup. esq.' }, { value: 'tr', label: 'Sup. dir.' }, { value: 'bl', label: 'Inf. esq.' }, { value: 'br', label: 'Inf. dir.' }]} />
-            </div>
-          </div>
-
-          <div className="panel">
-            <h3>IA local</h3>
-            <div className="stack">
-              <div className="field"><span className="label">Endereço do ComfyUI</span><input className="input" defaultValue={g.comfy.url} onBlur={(e) => setGlobal({ comfy: { url: e.target.value.trim() } })} /></div>
-              <div className="field"><span className="label">Modelo de visão do Ollama</span><input className="input" defaultValue={g.ollama.model} onBlur={(e) => setGlobal({ ollama: { model: e.target.value.trim() } })} /></div>
             </div>
           </div>
 
