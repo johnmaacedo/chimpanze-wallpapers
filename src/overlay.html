@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Identificar monitor</title>
+  <style>
+    @font-face { font-family: 'Unbounded'; src: url('./fonts/unbounded.woff2') format('woff2'); font-weight: 200 900; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; font-family: 'Unbounded', 'Segoe UI', sans-serif; }
+    .frame { position: fixed; inset: 0; border: 6px solid #ff8a3d; border-radius: 4px; box-shadow: inset 0 0 80px rgba(255, 138, 61, .35);
+      animation: frame 3.4s cubic-bezier(.2,.8,.2,1) forwards; }
+    .card { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 10px;
+      padding: 36px 64px 40px; border-radius: 36px; background: rgba(20, 13, 9, .78); backdrop-filter: blur(18px);
+      border: 1px solid rgba(255, 190, 140, .25); box-shadow: 0 30px 80px rgba(0,0,0,.5);
+      animation: pop 3.4s cubic-bezier(.2,.9,.2,1) forwards; color: #fff4e8; }
+    .num { font-size: 168px; font-weight: 800; line-height: 1; background: linear-gradient(180deg, #ffd28a, #ff7a2f); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .name { font-size: 26px; font-weight: 600; letter-spacing: .01em; }
+    .meta { font-family: 'Segoe UI', sans-serif; font-size: 17px; opacity: .72; }
+    .badge { margin-top: 6px; font-family: 'Segoe UI', sans-serif; font-size: 13px; padding: 4px 12px; border-radius: 99px; background: #ff8a3d; color: #1a0f08; font-weight: 700; }
+    @keyframes pop { 0% { opacity: 0; transform: translate(-50%, -46%) scale(.86); } 12% { opacity: 1; transform: translate(-50%, -50%) scale(1); } 85% { opacity: 1; transform: translate(-50%, -50%) scale(1); } 100% { opacity: 0; transform: translate(-50%, -52%) scale(.96); } }
+    @keyframes frame { 0% { opacity: 0; } 10% { opacity: 1; } 85% { opacity: 1; } 100% { opacity: 0; } }
+  </style>
+</head>
+<body>
+  <div class="frame"></div>
+  <div class="card">
+    <div class="num" id="n">1</div>
+    <div class="name" id="name"></div>
+    <div class="meta" id="meta"></div>
+    <div class="badge" id="primary" hidden>Principal</div>
+  </div>
+  <script>
+    const q = new URLSearchParams(location.search);
+    document.getElementById('n').textContent = q.get('n') || '?';
+    document.getElementById('name').textContent = q.get('name') || '';
+    const hz = q.get('hz');
+    document.getElementById('meta').textContent = (q.get('res') || '') + (hz && hz !== '0' ? ` · ${hz} Hz` : '');
+    if (q.get('primary') === '1') document.getElementById('primary').hidden = false;
+  </script>
+</body>
+</html>

@@ -1,0 +1,152 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="42%" r="70%">
+      <stop offset="0" stop-color="#6a4328"/>
+      <stop offset="0.55" stop-color="#3a2416"/>
+      <stop offset="1" stop-color="#1c110a"/>
+    </radialGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b07a4c" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#6b4226" stop-opacity="0.5"/>
+    </linearGradient>
+    <linearGradient id="hood" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8a5532"/>
+      <stop offset="1" stop-color="#5e361d"/>
+    </linearGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7a4728"/>
+      <stop offset="1" stop-color="#4e2c17"/>
+    </linearGradient>
+    <linearGradient id="skin" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffe7d6"/>
+      <stop offset="1" stop-color="#fdd2ba"/>
+    </linearGradient>
+    <linearGradient id="hair" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff0b8"/>
+      <stop offset="1" stop-color="#f2c35e"/>
+    </linearGradient>
+    <linearGradient id="iris" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a130a"/>
+      <stop offset="0.55" stop-color="#7a3416"/>
+      <stop offset="1" stop-color="#ff9a3d"/>
+    </linearGradient>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd27e"/>
+      <stop offset="0.6" stop-color="#ff8a3d"/>
+      <stop offset="1" stop-color="#ff5f6d"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#ff9a3d" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#ff9a3d" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="frameClip"><rect x="160" y="326" width="192" height="122" rx="12"/></clipPath>
+    <clipPath id="bgClip"><rect x="16" y="16" width="480" height="480" rx="104"/></clipPath>
+    <radialGradient id="blush" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#ff8a95" stop-opacity="0.7"/>
+      <stop offset="1" stop-color="#ff8a95" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- tile -->
+  <rect x="16" y="16" width="480" height="480" rx="104" fill="url(#bg)"/>
+  <rect x="17.5" y="17.5" width="477" height="477" rx="102.5" fill="none" stroke="url(#rim)" stroke-width="3"/>
+
+  <g clip-path="url(#bgClip)">
+    <!-- body (kigurumi) -->
+    <path d="M96 512 C100 410 150 338 256 330 C362 338 412 410 416 512 Z" fill="url(#body)"/>
+    <path d="M186 512 C190 450 214 410 256 404 C298 410 322 450 326 512 Z" fill="#e2b083"/>
+
+    <!-- ears -->
+    <circle cx="110" cy="214" r="50" fill="#6e4022"/>
+    <circle cx="110" cy="214" r="30" fill="#e7b88a"/>
+    <circle cx="402" cy="214" r="50" fill="#6e4022"/>
+    <circle cx="402" cy="214" r="30" fill="#e7b88a"/>
+
+    <!-- hood -->
+    <path d="M256 54 C356 54 412 126 410 214 C408 292 352 344 256 348 C160 344 104 292 102 214 C100 126 156 54 256 54 Z" fill="url(#hood)"/>
+    <!-- hood tuft -->
+    <path d="M226 64 L240 34 L252 60 L266 30 L276 62 L292 42 L290 72 Z" fill="#8a5532"/>
+    <!-- monkey eyes on the hood -->
+    <circle cx="222" cy="96" r="9" fill="#1a0d06"/>
+    <circle cx="290" cy="96" r="9" fill="#1a0d06"/>
+    <circle cx="225" cy="93" r="3" fill="#fff"/>
+    <circle cx="293" cy="93" r="3" fill="#fff"/>
+    <!-- hood face opening (monkey mask rim) -->
+    <path d="M256 116 C300 104 346 124 356 170 C368 226 352 300 256 326 C160 300 144 226 156 170 C166 124 212 104 256 116 Z" fill="#e2b083"/>
+
+    <!-- back/side hair (layered, two-tone) -->
+    <path d="M170 160 C146 214 146 286 172 340 C176 318 180 292 186 270 C182 300 190 322 204 336 C196 300 196 256 204 220 Z" fill="url(#hair)"/>
+    <path d="M342 160 C366 214 366 286 340 340 C336 318 332 292 326 270 C330 300 322 322 308 336 C316 300 316 256 308 220 Z" fill="url(#hair)"/>
+    <path d="M176 210 C168 250 170 296 182 326" stroke="#d99a3c" stroke-width="3" fill="none" stroke-linecap="round" opacity="0.7"/>
+    <path d="M336 210 C344 250 342 296 330 326" stroke="#d99a3c" stroke-width="3" fill="none" stroke-linecap="round" opacity="0.7"/>
+
+    <!-- face -->
+    <path d="M256 140 C310 140 340 176 338 226 C336 270 304 306 256 316 C208 306 176 270 174 226 C172 176 202 140 256 140 Z" fill="url(#skin)"/>
+    <!-- soft shadow cast by the bangs -->
+    <path d="M178 214 Q196 232 214 214 Q232 236 252 212 Q272 238 292 214 Q312 234 334 214 L334 236 Q256 250 178 236 Z" fill="#f1b99c" opacity="0.55"/>
+    <!-- jaw shading -->
+    <path d="M196 284 Q226 306 256 310 Q286 306 316 284 Q300 312 256 318 Q212 312 196 284 Z" fill="#f2bfa3" opacity="0.6"/>
+
+    <!-- bangs: pointed anime strands -->
+    <path d="M164 214 C162 152 204 116 256 116 C310 116 350 152 348 214
+             L334 196 L326 222 L312 184 L298 226 L284 180 L270 214 L262 168 L250 230 L238 176 L226 220 L214 182 L202 226 L190 190 L180 218 L172 200 Z" fill="url(#hair)"/>
+    <!-- strand shading -->
+    <path d="M262 168 L256 200 L250 230" stroke="#d99a3c" stroke-width="2.5" fill="none" stroke-linecap="round" opacity="0.8"/>
+    <path d="M284 180 L290 204 L298 226" stroke="#d99a3c" stroke-width="2.5" fill="none" stroke-linecap="round" opacity="0.7"/>
+    <path d="M214 182 L208 204 L202 226" stroke="#d99a3c" stroke-width="2.5" fill="none" stroke-linecap="round" opacity="0.7"/>
+    <!-- angel-ring shine -->
+    <path d="M200 150 Q256 128 314 150" stroke="#fffaf0" stroke-width="7" stroke-linecap="round" fill="none" opacity="0.75"/>
+    <path d="M214 160 L222 150 M290 150 L298 160 M252 146 L258 138" stroke="#fffaf0" stroke-width="3" stroke-linecap="round" opacity="0.85"/>
+
+    <!-- star clip -->
+    <path d="M320 166 l5 10 11 1.5 -8 7.5 2 11 -10 -5.5 -10 5.5 2 -11 -8 -7.5 11 -1.5 z" fill="#ff8a3d" stroke="#fff3d6" stroke-width="2.5" stroke-linejoin="round"/>
+
+    <!-- relaxed brows (peeking under bangs) -->
+    <path d="M204 230 Q217 226 230 229" stroke="#c98f3e" stroke-width="3" stroke-linecap="round" fill="none" opacity="0.85"/>
+    <path d="M282 229 Q295 226 308 230" stroke="#c98f3e" stroke-width="3" stroke-linecap="round" fill="none" opacity="0.85"/>
+
+    <!-- serene closed eyes -->
+    <path d="M198 252 Q219 266 242 251" stroke="#3a1c0e" stroke-width="5.5" stroke-linecap="round" fill="none"/>
+    <path d="M198 252 L190 249 M204 258 L198 263 M212 262 L209 268" stroke="#3a1c0e" stroke-width="3" stroke-linecap="round"/>
+    <path d="M270 251 Q293 266 314 252" stroke="#3a1c0e" stroke-width="5.5" stroke-linecap="round" fill="none"/>
+    <path d="M314 252 L322 249 M308 258 L314 263 M300 262 L303 268" stroke="#3a1c0e" stroke-width="3" stroke-linecap="round"/>
+
+    <!-- blush with anime hatch lines -->
+    <ellipse cx="204" cy="280" rx="22" ry="12" fill="url(#blush)"/>
+    <ellipse cx="308" cy="280" rx="22" ry="12" fill="url(#blush)"/>
+    <path d="M194 284 L200 274 M203 285 L209 275 M212 285 L218 275" stroke="#ff7a86" stroke-width="2.2" stroke-linecap="round" opacity="0.8"/>
+    <path d="M298 285 L304 275 M307 285 L313 275 M316 284 L322 274" stroke="#ff7a86" stroke-width="2.2" stroke-linecap="round" opacity="0.8"/>
+
+    <!-- nose & soft smile -->
+    <path d="M255 272 Q258 277 254 279" stroke="#d99178" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+    <path d="M244 293 Q256 300 270 291" stroke="#8a3424" stroke-width="3.2" stroke-linecap="round" fill="none"/>
+    <path d="M250 297 Q257 300 264 296" stroke="#ff9aa2" stroke-width="2.4" stroke-linecap="round" fill="none" opacity="0.7"/>
+
+    <!-- glow behind sign -->
+    <ellipse cx="256" cy="392" rx="160" ry="96" fill="url(#glow)"/>
+
+    <!-- sign: framed wallpaper -->
+    <rect x="148" y="314" width="216" height="146" rx="22" fill="#2a1a10"/>
+    <rect x="148" y="314" width="216" height="146" rx="22" fill="none" stroke="#f3dcc0" stroke-width="5"/>
+    <g clip-path="url(#frameClip)">
+      <rect x="160" y="326" width="192" height="122" fill="url(#sky)"/>
+      <circle cx="298" cy="368" r="20" fill="#fff4dc"/>
+      <circle cx="298" cy="368" r="30" fill="#fff4dc" opacity="0.25"/>
+      <path d="M160 448 L160 404 L206 362 L244 396 L276 372 L352 430 L352 448 Z" fill="#b8456a"/>
+      <path d="M160 448 L160 424 L214 396 L262 428 L304 406 L352 438 L352 448 Z" fill="#5a2347"/>
+      <path d="M206 362 L196 371 L206 368 L214 374 Z" fill="#ffe1ea" opacity="0.8"/>
+    </g>
+
+    <!-- paws holding the sign -->
+    <g>
+      <ellipse cx="150" cy="392" rx="30" ry="36" fill="#7a4728"/>
+      <ellipse cx="160" cy="368" rx="11" ry="9" fill="#e7b88a"/>
+      <ellipse cx="164" cy="390" rx="11" ry="9" fill="#e7b88a"/>
+      <ellipse cx="160" cy="412" rx="11" ry="9" fill="#e7b88a"/>
+      <ellipse cx="362" cy="392" rx="30" ry="36" fill="#7a4728"/>
+      <ellipse cx="352" cy="368" rx="11" ry="9" fill="#e7b88a"/>
+      <ellipse cx="348" cy="390" rx="11" ry="9" fill="#e7b88a"/>
+      <ellipse cx="352" cy="412" rx="11" ry="9" fill="#e7b88a"/>
+    </g>
+  </g>
+</svg>

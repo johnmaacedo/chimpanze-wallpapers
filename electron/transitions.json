@@ -1,0 +1,57 @@
+{
+  "categories": [
+    { "id": "soft", "label": "Suaves" },
+    { "id": "motion", "label": "Movimento" },
+    { "id": "depth", "label": "3D" },
+    { "id": "shape", "label": "Formas" },
+    { "id": "energy", "label": "Energia" }
+  ],
+  "list": [
+    { "id": "fade", "label": "Dissolver com zoom", "cat": "soft" },
+    { "id": "crossBlur", "label": "Troca de foco", "cat": "soft" },
+    { "id": "appleZoom", "label": "Zoom Apple", "cat": "soft" },
+    { "id": "lumaReveal", "label": "Revelação por luz", "cat": "soft" },
+    { "id": "mistFade", "label": "Névoa", "cat": "soft" },
+    { "id": "bokeh", "label": "Bokeh", "cat": "soft" },
+    { "id": "morph", "label": "Morph", "cat": "soft" },
+    { "id": "dipBlack", "label": "Mergulho no escuro", "cat": "soft" },
+    { "id": "flashWhite", "label": "Clarão", "cat": "soft" },
+    { "id": "irisSoft", "label": "Íris suave", "cat": "soft" },
+    { "id": "softWipe", "label": "Cortina suave", "cat": "soft" },
+    { "id": "dreamWave", "label": "Sonho", "cat": "soft" },
+
+    { "id": "pushLeft", "label": "Empurrar (iOS)", "cat": "motion" },
+    { "id": "sheetUp", "label": "Folha subindo", "cat": "motion" },
+    { "id": "elasticSwipe", "label": "Deslize contínuo", "cat": "motion" },
+    { "id": "prism", "label": "Prisma", "cat": "energy" },
+    { "id": "waveReveal", "label": "Onda", "cat": "motion" },
+    { "id": "lightSweep", "label": "Varredura de luz", "cat": "motion" },
+    { "id": "directionalWarp", "label": "Dobra diagonal", "cat": "motion" },
+    { "id": "radialSoft", "label": "Relógio", "cat": "motion" },
+    { "id": "parallaxSlide", "label": "Deslize parallax", "cat": "motion" },
+    { "id": "cardSwap", "label": "Troca de cartões", "cat": "motion" },
+
+    { "id": "cube3d", "label": "Cubo 3D", "cat": "depth" },
+    { "id": "tilt3d", "label": "Cover Flow", "cat": "depth" },
+    { "id": "doorway", "label": "Portas", "cat": "depth" },
+    { "id": "gridFlip", "label": "Mosaico giratório", "cat": "depth" },
+
+    { "id": "squircle", "label": "Squircle", "cat": "shape" },
+    { "id": "circleReveal", "label": "Revelação circular", "cat": "shape" },
+    { "id": "bubbles", "label": "Bolhas", "cat": "shape" },
+    { "id": "inkBleed", "label": "Tinta", "cat": "shape" },
+    { "id": "liquid", "label": "Líquido", "cat": "shape" },
+
+    { "id": "zoomBlur", "label": "Mergulho com blur", "cat": "energy" },
+    { "id": "crossZoom", "label": "Zoom cruzado", "cat": "energy" },
+    { "id": "zoomSpin", "label": "Giro com zoom", "cat": "energy" },
+    { "id": "swirlSoft", "label": "Redemoinho", "cat": "energy" },
+    { "id": "ripple", "label": "Ondulação", "cat": "energy" },
+    { "id": "lightLeak", "label": "Vazamento de luz", "cat": "energy" },
+    { "id": "chromaPunch", "label": "Punch cromático", "cat": "energy" },
+    { "id": "glitch", "label": "Glitch", "cat": "energy" },
+    { "id": "pixelDissolve", "label": "Pixels", "cat": "energy" },
+    { "id": "slices", "label": "Fatias", "cat": "energy" }
+  ],
+  "defaultOff": ["slices"]
+}
