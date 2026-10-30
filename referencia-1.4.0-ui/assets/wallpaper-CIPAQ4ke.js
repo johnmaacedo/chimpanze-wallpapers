@@ -1,0 +1,1 @@
+import{t as e}from"./engine-B01C9w9n.js";var t=document.getElementById(`c`),n=new e(t);n.onFirstFrame=()=>window.cw.send(`wp:frame`),n.onError=e=>window.cw.send(`wp:error`,e),window.cw.on(`wp:show`,e=>{n.show(e)}),window.cw.on(`wp:paused`,e=>n.setPaused(!!e)),window.cw.on(`wp:settings`,e=>n.setSettings(e||{})),setTimeout(()=>{n.warmup([`fade`]),window.cw.send(`wp:ready`)},0);

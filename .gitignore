@@ -1,0 +1,9 @@
+node_modules/
+dist/
+release/
+out/
+*.log
+.env
+resources/bin/
+resources/models/
+*.exe
