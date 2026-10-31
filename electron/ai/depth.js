@@ -9,7 +9,7 @@ const { app, utilityProcess } = require('electron');
 const log = require('../log');
 
 const IDLE_MS = 30000;
-const VERSION = 2; // bump when the depth recipe changes (old maps are rebuilt)
+const VERSION = 3; // bump when the depth recipe changes (old maps are rebuilt)
 const MAX_CACHE = 1200; // files (each picture = depth PNG + background plate JPEG)
 let child = null;
 let idleTimer = null;
@@ -19,6 +19,9 @@ const inflight = new Map(); // out file -> promise
 let queue = Promise.resolve();
 let writes = 0;
 
+function segPath() {
+  return app.isPackaged ? path.join(process.resourcesPath, 'models', 'anime-seg-isnetis.onnx') : path.join(__dirname, '..', '..', 'resources', 'models', 'anime-seg-isnetis.onnx');
+}
 function lamaPath() {
   return app.isPackaged ? path.join(process.resourcesPath, 'models', 'lama.onnx') : path.join(__dirname, '..', '..', 'resources', 'models', 'lama.onnx');
 }
@@ -41,7 +44,7 @@ function start() {
   child = utilityProcess.fork(path.join(__dirname, 'depth-worker.js'), [], {
     serviceName: 'Chimpanze Wallpapers Profundidade',
     stdio: 'pipe',
-    env: Object.assign({}, process.env, { CW_DEPTH_MODEL: modelPath(), CW_LAMA_MODEL: lamaPath() }),
+    env: Object.assign({}, process.env, { CW_DEPTH_MODEL: modelPath(), CW_LAMA_MODEL: lamaPath(), CW_SEG_MODEL: segPath() }),
   });
   const c = child;
   const fwd = (buf) => String(buf).split(/\r?\n/).filter(Boolean).forEach((l) => log.info('depth:', l.replace(/^\[[^\]]+\]\s*\w+\s*/, '')));
@@ -104,8 +107,13 @@ function prune() {
   } catch (_) { /* nothing cached yet */ }
 }
 
-const result = (out) => ({ depth: out, plate: plateFor(out) });
-const complete = (out) => fs.existsSync(out) && fs.existsSync(plateFor(out));
+const infoFor = (depthFile) => depthFile.replace(/.png$/i, '.json');
+function readInfo(out) {
+  try { return JSON.parse(fs.readFileSync(infoFor(out), 'utf8')); } catch (_) { return null; }
+}
+/** { depth, plate, analysis } — analysis = what the picture is and how far it can move safely. */
+const result = (out) => ({ depth: out, plate: plateFor(out), analysis: readInfo(out) });
+const complete = (out) => fs.existsSync(out) && fs.existsSync(plateFor(out)) && fs.existsSync(infoFor(out));
 
 /** Cached { depth, plate } for `file` if it already exists (no work), else null. */
 function cached(file) {
@@ -135,7 +143,7 @@ function get(file) {
   if (!out) return Promise.reject(new Error('Arquivo não encontrado.'));
   if (complete(out)) {
     const now = new Date();
-    for (const f of [out, plateFor(out)]) { try { fs.utimesSync(f, now, fs.statSync(f).mtime); } catch (_) { /* ignore */ } }
+    for (const f of [out, plateFor(out), infoFor(out)]) { try { fs.utimesSync(f, now, fs.statSync(f).mtime); } catch (_) { /* ignore */ } }
     return Promise.resolve(result(out));
   }
   if (inflight.has(out)) return inflight.get(out);
@@ -144,7 +152,7 @@ function get(file) {
   const job = queue.then(async () => {
     if (complete(out)) return result(out);
     const r = await runInWorker(file, out);
-    log.info('depth: mapa pronto', path.basename(file), `${r.width}x${r.height}`, r.provider, `fundo ${r.plate}`, `corte ${r.split}`, `${r.ms} ms`);
+    log.info('depth: mapa pronto', path.basename(file), `${r.width}x${r.height}`, r.provider, `recorte ${r.cut}`, `fundo ${r.plate}`, r.analysis ? `tipo ${r.analysis.kind} faixa ${r.analysis.band}px` : '', `${r.ms} ms`);
     if (++writes % 40 === 0) prune();
     return result(out);
   });

@@ -12,9 +12,10 @@ App pessoal do John (Electron 44 + React 19 + Vite + TypeScript, Windows). Leia 
 - `electron/` é o da 1.4.0 (JS legível, completo).
 - `src/` foi reconstruído a partir da interface 1.4.0 compilada (`referencia-1.4.0-ui/`, só para consulta): páginas Monitores, Galeria, Editor, Upscale e Ajustes; motor de transições (`src/wallpaper/`), hoje com 75 transições (1.5.0); `src/hub.html` (página escondida que abre as janelas de wallpaper). O CSS gerado é idêntico ao da 1.4.0.
 - Editor: pipeline WebGL em `src/ui/editor/gl.ts`; página em `src/ui/pages/Editor.tsx`.
+- 1.5.2: recorte por IA de anime (`anime-seg-isnetis.onnx`, fora do Git) + análise por imagem (`analyse()` em `electron/ai/depth-core.js`, salva em `.json` no cache) + presets (receitas `RECIPES` e limite `safeBand` em `src/wallpaper/engine.ts`). Para testar o efeito sem abrir o app: gerar mapas com `electron/ai/depth` e renderizar o `Engine` numa página do Vite capturando quadros nas fases extremas da câmera.
 - 1.5.1: parallax em duas camadas (personagem + fundo refeito) com câmera em loop; página Monitores reorganizada; Upscale com seletor da galeria e confirmação; camada visual premium.
 - 1.5.0: parallax 2.5D (Depth Anything V2 Small em `electron/ai/depth*.js`, mapas em cache em `%APPDATA%\Chimpanzé Wallpapers\depth`), chave geral na página Monitores; shaders compilam em segundo plano (KHR_parallel_shader_compile).
-- Binários grandes (`resources/bin/upscaler`, `resources/models/lama.onnx`, `resources/models/depth-anything-v2-small.onnx`) ficam fora do Git; copie da instalação (`%LOCALAPPDATA%\Programs\ChimpanzeWallpapers\resources\`).
+- Binários grandes (`resources/bin/upscaler`, `resources/models/lama.onnx`, `resources/models/depth-anything-v2-small.onnx`, `resources/models/anime-seg-isnetis.onnx`) ficam fora do Git; copie da instalação (`%LOCALAPPDATA%\Programs\ChimpanzeWallpapers\resources\`).
 - O npm 11+ bloqueia scripts de instalação: depois de `npm install`, rode `node node_modules/electron/install.js` se o Electron não tiver baixado.
 
 ## Decisões do John

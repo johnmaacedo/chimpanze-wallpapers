@@ -18,6 +18,36 @@ export interface ShowMsg {
   depthUrl?: string;
   /** Background plate (characters removed) that fills what the camera uncovers. */
   plateUrl?: string;
+  /** What the picture is and how far it can move without artifacts (from the depth pass). */
+  analysis?: ParAnalysis | null;
+}
+
+export interface ParAnalysis {
+  kind: 'anime' | 'real' | 'landscape';
+  count: number; cover: number; gap: number; busy: number; hair: number; band: number; style: ParStyle;
+}
+export type ParPreset = 'auto' | 'anime' | 'landscape' | 'real' | 'custom';
+
+/**
+ * Per-kind recipes, calibrated on a bench of anime wallpapers, landscapes and
+ * photos. "band" = widest strip (px at 1920 wide) the camera may uncover behind
+ * a character before the rebuilt background starts to show.
+ */
+const RECIPES: Record<'anime' | 'real' | 'landscape', { band: number; style: ParStyle; focus: number; dolly: number; blur: number; speed: number }> = {
+  anime: { band: 30, style: 'orbit', focus: 0.62, dolly: 0.55, blur: 0.05, speed: 0.8 },
+  real: { band: 22, style: 'orbit', focus: 0.66, dolly: 0.4, blur: 0.06, speed: 0.7 },
+  landscape: { band: 26, style: 'travel', focus: 0.3, dolly: 1.2, blur: 0, speed: 0.6 },
+};
+
+/** Safe strip for one picture under a recipe: thinner with busy backgrounds, loose hair, big characters. */
+function safeBand(kind: 'anime' | 'real' | 'landscape', a: ParAnalysis) {
+  let band = RECIPES[kind].band;
+  if (kind !== 'landscape' && a.kind !== 'landscape') {
+    band *= 1 - 0.45 * a.busy;
+    band *= 1 - 0.3 * a.hair;
+    if (a.cover > 0.45) band *= 0.8;
+  }
+  return Math.max(9, band);
 }
 
 /** Parallax camera: how far (in image width) the nearest layer travels at 100%. */
@@ -86,6 +116,7 @@ class Media {
   url = '';
   depthTex: WebGLTexture | null = null;
   plateTex: WebGLTexture | null = null;
+  analysis: ParAnalysis | null = null;
   /** When the depth map arrived (parallax fades in from there). */
   depthAt = 0;
   private video: HTMLVideoElement | null = null;
@@ -304,6 +335,7 @@ export class Engine {
   private parFocus = 0.35;
   private parBlur = 0.2;
   private parMouse = true;
+  private parPreset: ParPreset = 'auto';
   /** Camera path phase (radians), integrated so speed changes never jump. */
   private parPhase = 0;
   /** Global parallax amount, eased toward 0/1 when the switch changes. */
@@ -409,7 +441,7 @@ export class Engine {
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) fail(`link ${name}: ${gl.getProgramInfoLog(prog)}`);
     gl.detachShader(prog, vs); gl.detachShader(prog, fs);
     gl.deleteShader(vs); gl.deleteShader(fs);
-    const names = ['uFrom', 'uTo', 'uFromSize', 'uToSize', 'uRes', 'uProgress', 'uTime', 'uSeed', 'uFit', 'uFromZoom', 'uToZoom', 'uFromPan', 'uToPan', 'uHasFrom', 'uFromMips', 'uToMips', 'uIntensity', 'uMbSamples', 'uShutter', 'uFromDepth', 'uToDepth', 'uFromPlate', 'uToPlate', 'uFromPar', 'uToPar', 'uParFocus', 'uParBlur'];
+    const names = ['uFrom', 'uTo', 'uFromSize', 'uToSize', 'uRes', 'uProgress', 'uTime', 'uSeed', 'uFit', 'uFromZoom', 'uToZoom', 'uFromPan', 'uToPan', 'uHasFrom', 'uFromMips', 'uToMips', 'uIntensity', 'uMbSamples', 'uShutter', 'uFromDepth', 'uToDepth', 'uFromPlate', 'uToPlate', 'uFromPar', 'uToPar', 'uFromPar2', 'uToPar2'];
     const loc: Record<string, WebGLUniformLocation | null> = {};
     for (const n of names) loc[n] = gl.getUniformLocation(prog, n);
     p = { prog, loc };
@@ -440,7 +472,9 @@ export class Engine {
   setSettings(s: {
     fit?: Fit; kenBurns?: boolean; intensity?: number; parallax?: boolean; parallaxStrength?: number; parallaxMouse?: boolean;
     parallaxSpeed?: number; parallaxStyle?: ParStyle; parallaxDolly?: number; parallaxFocus?: number; parallaxBlur?: number;
+    parallaxPreset?: ParPreset;
   }) {
+    if (s.parallaxPreset && ['auto', 'anime', 'landscape', 'real', 'custom'].includes(s.parallaxPreset)) this.parPreset = s.parallaxPreset;
     const num = (v: unknown, lo: number, hi: number) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : null);
     this.parSpeed = num(s.parallaxSpeed, 0.1, 4) ?? this.parSpeed;
     this.parDolly = num(s.parallaxDolly, 0, 3) ?? this.parDolly;
@@ -464,9 +498,10 @@ export class Engine {
   }
 
   /** Depth map that arrived after the picture (fades the parallax in). */
-  async setDepth(msg: { url: string; depthUrl: string; plateUrl?: string }) {
+  async setDepth(msg: { url: string; depthUrl: string; plateUrl?: string; analysis?: ParAnalysis | null }) {
     const m = this.to && this.to.url === msg.url ? this.to : null;
     if (!m) return;
+    m.analysis = msg.analysis || null;
     try { await m.loadDepth(msg.depthUrl, msg.plateUrl, true); } catch (err: any) { this.onError?.(`Profundidade: ${err.message || err}`); }
     this.kick();
   }
@@ -492,6 +527,7 @@ export class Engine {
       await media.load(msg, this.canvas.width, this.canvas.height, true);
       // Depth that is ready up front comes in without a fade (the picture arrives in 3D).
       if (msg.depthUrl) await media.loadDepth(msg.depthUrl, msg.plateUrl, false).catch(() => {});
+      media.analysis = msg.analysis || null;
     } catch (err: any) {
       media.dispose();
       this.onError?.(`Falha ao carregar ${decodeURIComponent(msg.url.split('/').pop() || '')}: ${err.message || err}`);
@@ -546,26 +582,51 @@ export class Engine {
    * critically damped spring so it never jerks. Returns [shift x, shift y,
    * dolly, amount] in image uv.
    */
+  /**
+   * Settings for one picture. With a preset, the recipe of its kind is applied
+   * and the camera is scaled so the strip uncovered behind the characters never
+   * exceeds the safe band measured for that picture ("Intensidade" multiplies
+   * that band). "custom" uses the sliders as they are.
+   */
+  private parSettings(m: Media) {
+    const a = m.analysis;
+    if (this.parPreset === 'custom' || !a) {
+      return { style: this.parStyle, focus: this.parFocus, blur: this.parBlur, speed: 1, amp: PAR_AMP * this.parStrength, dolly: PAR_DOLLY * this.parDolly * Math.min(2, this.parStrength) };
+    }
+    const kind = this.parPreset === 'auto' ? a.kind : this.parPreset;
+    const r = RECIPES[kind];
+    const style: ParStyle = this.parPreset === 'auto' ? (a.kind === 'landscape' ? 'travel' : a.count > 2 ? 'float' : r.style) : r.style;
+    // A touch of depth of field hides the rebuilt strip on detailed backgrounds.
+    const blur = kind === 'landscape' ? 0 : r.blur + 0.2 * a.busy;
+    // Relative slide of the characters against the background = shift × depth gap
+    // (+ half the dolly at the frame edges). Solve the shift for the safe band.
+    const want = (safeBand(kind, a) * this.parStrength) / 1920 / Math.max(0.06, a.gap);
+    const zPeak = ({ orbit: 0.35, walk: 1, travel: 0.25, dolly: 1, float: 0.5 } as Record<ParStyle, number>)[style];
+    const amp = want / (1 + 0.5 * r.dolly * zPeak);
+    return { style, focus: r.focus, blur, speed: r.speed, amp, dolly: amp * r.dolly };
+  }
+
   private parCamera(m: Media, now: number): [number, number, number, number] {
     if (!m.depthTex || this.parAmt < 0.001) return [0, 0, 0, 0];
     const fade = Math.min(1, (now - m.depthAt) / PAR_FADE_MS);
     const amt = this.parAmt * fade * fade * (3 - 2 * fade);
-    let [vx, vy, vz] = PATHS[this.parStyle](this.parPhase + this.parSeed);
+    const ps = this.parSettings(m);
+    let [vx, vy, vz] = PATHS[ps.style](this.parPhase + this.parSeed);
     if (this.parMouse && now - this.pointer.at < 20000) {
       const w = this.pointer.inside ? 0.6 : 0.3;
       vx += this.pointer.x * w;
       vy += this.pointer.y * w;
     }
     const asp = this.canvas.width / Math.max(1, this.canvas.height);
-    const a = PAR_AMP * this.parStrength;
     // Near things slide against the camera, like looking past them from that side.
-    return [-vx * a, vy * a * asp * 0.75, vz * PAR_DOLLY * this.parDolly * Math.min(2, this.parStrength), amt];
+    return [-vx * ps.amp, vy * ps.amp * asp * 0.75, vz * ps.dolly, amt];
   }
 
   private stepParallax(now: number) {
     const dt = Math.min(0.1, Math.max(0, (now - (this.lastFrame || now)) / 1000));
     this.lastFrame = now;
-    this.parPhase = (this.parPhase + dt * this.parSpeed * (2 * Math.PI / PAR_PERIOD)) % (Math.PI * 2000);
+    const kindSpeed = this.to && this.to.analysis ? this.parSettings(this.to).speed : 1;
+    this.parPhase = (this.parPhase + dt * this.parSpeed * kindSpeed * (2 * Math.PI / PAR_PERIOD)) % (Math.PI * 2000);
     const target = this.parallax ? 1 : 0;
     this.parAmt += (target - this.parAmt) * (1 - Math.exp(-dt * 2.2));
     if (Math.abs(target - this.parAmt) < 0.002) this.parAmt = target;
@@ -636,14 +697,14 @@ export class Engine {
     const pt = this.parCamera(this.to, now);
     // Overscan so the shifted layers never reveal the picture's border: the
     // farthest a pixel can travel is the shift/dolly times its distance to the focus.
-    const far = Math.max(this.parFocus, 1 - this.parFocus);
-    const over = (p: number[]) => 1 + (2 * Math.hypot(p[0], p[1]) + Math.abs(p[2])) * far * p[3] + 0.004 * p[3];
-    gl.uniform1f(L.uFromZoom, kf.zoom * over(pf));
-    gl.uniform1f(L.uToZoom, kt.zoom * over(pt));
+    const sf = this.parSettings(fromM); const st = this.parSettings(this.to);
+    const over = (p: number[], focus: number) => 1 + (2 * Math.hypot(p[0], p[1]) + Math.abs(p[2])) * Math.max(focus, 1 - focus) * p[3] + 0.004 * p[3];
+    gl.uniform1f(L.uFromZoom, kf.zoom * over(pf, sf.focus));
+    gl.uniform1f(L.uToZoom, kt.zoom * over(pt, st.focus));
     gl.uniform4f(L.uFromPar, pf[0], pf[1], pf[2], pf[3]);
     gl.uniform4f(L.uToPar, pt[0], pt[1], pt[2], pt[3]);
-    gl.uniform1f(L.uParFocus, this.parFocus);
-    gl.uniform1f(L.uParBlur, this.parBlur);
+    gl.uniform2f(L.uFromPar2, sf.focus, sf.blur);
+    gl.uniform2f(L.uToPar2, st.focus, st.blur);
     gl.activeTexture(gl.TEXTURE4);
     gl.bindTexture(gl.TEXTURE_2D, fromM.plateTex || this.blackTex);
     gl.uniform1i(L.uFromPlate, 4);
