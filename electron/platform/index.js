@@ -33,6 +33,8 @@ if (process.platform === 'win32') {
     isRaisedDesktop() { return false; },
     foregroundInfo() { return null; },
     foregroundWindow() { return null; },
+    findAppWindow() { return null; },
+    focusWindow() { return false; },
     sendKeys() {},
     resetCom() {},
   };

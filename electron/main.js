@@ -111,6 +111,7 @@ async function boot() {
   monitors.start();
   scheduler.start();
   startOcclusionWatch();
+  updatePointerTimer();
 
   try {
     globalShortcut.register('CommandOrControl+Alt+W', () => (mainWin && mainWin.isVisible() && mainWin.isFocused() ? hideMain() : showMain()));
@@ -122,6 +123,38 @@ async function boot() {
       quitting = true;
       app.quit();
     }, 6000);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Parallax: the wallpaper leans toward the mouse (cursor sampled ~30×/s, only
+// while the parallax is on, and only sent when it actually moved).
+
+let pointerTimer = null;
+let lastPointer = '';
+function updatePointerTimer() {
+  const g = config.global;
+  const want = scheduler.parallaxOn() && g.parallaxMouse !== false;
+  if (want && !pointerTimer) pointerTimer = setInterval(pollPointer, 33);
+  if (!want && pointerTimer) { clearInterval(pointerTimer); pointerTimer = null; lastPointer = ''; }
+}
+function pollPointer() {
+  let pt;
+  try {
+    pt = screen.getCursorScreenPoint();
+    if (process.platform === 'win32') pt = screen.dipToScreenPoint(pt); // monitor rects are physical pixels
+  } catch (_) { return; }
+  const key = `${pt.x},${pt.y}`;
+  if (key === lastPointer) return;
+  lastPointer = key;
+  for (const m of monitors.monitors) {
+    const host = hosts.get(m.id);
+    if (!host || !m.rect) continue;
+    const r = m.rect;
+    const x = ((pt.x - r.x) / r.width) * 2 - 1;
+    const y = ((pt.y - r.y) / r.height) * 2 - 1;
+    // Off this monitor: lean gently toward where the cursor is (clamped).
+    host.pointer({ x: Math.max(-1.5, Math.min(1.5, x)), y: Math.max(-1.5, Math.min(1.5, y)), inside: Math.abs(x) <= 1 && Math.abs(y) <= 1 });
   }
 }
 
@@ -424,6 +457,7 @@ function publicState() {
     version: app.getVersion(),
     platform: process.platform,
     raisedDesktop: IS_WIN ? safe(() => platform.isRaisedDesktop(), false) : false,
+    depthModel: require('./ai/depth').exists(),
     monitors: online,
     offline,
     config: config.data,
@@ -453,6 +487,8 @@ function registerIpc() {
       const host = hosts.get(m.id);
       if (host) host.setSettings(scheduler.rendererSettings(config.monitor(m.id)));
     }
+    if (patch && ('parallax' in patch || 'reduceMotion' in patch)) scheduler.refreshDepth();
+    updatePointerTimer();
     broadcast('state', publicState());
     return g;
   });
@@ -574,7 +610,8 @@ function registerIpc() {
     try {
       return await chatgpt.send({ autoType: g.autoType !== false, autoSend: g.autoSend !== false, newChat: g.newChat !== false, ...opts });
     } catch (err) {
-      if (err.notInstalled) shell.openExternal(require('./chatgpt').STORE_URL);
+      // The page shows its own "install ChatGPT" notice (with a Store button).
+      if (err.notInstalled) return { auto: false, notInstalled: true };
       throw err;
     }
   });

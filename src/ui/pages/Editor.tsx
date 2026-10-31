@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   ImagePlus, Undo2, Redo2, Eye, Save, SlidersHorizontal, Crop, Eraser, MessageSquare, WandSparkles, Sparkles, RefreshCcw,
   Bookmark, FolderCog, RotateCw, SquareCenterlineDashedHorizontal, SquareCenterlineDashedVertical, Check, X, Copy, FolderOpen,
-  MonitorUp, ZoomIn, ZoomOut, Maximize,
+  MonitorUp, ZoomIn, ZoomOut, Maximize, Download,
 } from 'lucide-react';
 import { api, useStore, mediaUrl, fileName, type MediaItem } from '../api';
 import { Btn, Segmented } from '../components/controls';
@@ -47,7 +47,7 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
   const [customEdit, setCustomEdit] = useState('');
   const [prompt, setPrompt] = useState('');
   const [promptEdited, setPromptEdited] = useState(false);
-  const [cgStatus, setCgStatus] = useState<{ waiting: boolean; stage?: string }>({ waiting: false });
+  const [cgStatus, setCgStatus] = useState<{ waiting: boolean; stage?: string; installed?: boolean }>({ waiting: false });
   const [sentImage, setSentImage] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -171,9 +171,12 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
   });
 
   useEffect(() => {
-    api.invoke('chatgpt:status').then(setCgStatus).catch(() => {});
     return api.on('chatgpt:status', (st) => setCgStatus((s) => ({ ...s, ...st })));
   }, []);
+  // Checked each time the ChatGPT tab opens, so installing the app is noticed without a restart.
+  useEffect(() => {
+    if (tool === 'chatgpt') api.invoke('chatgpt:status').then(setCgStatus).catch(() => {});
+  }, [tool]);
 
   // --- ChatGPT request -----------------------------------------------------
   const aspectLabel = useMemo(() => {
@@ -206,7 +209,10 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
         aspect: cgMode === 'expand' ? expandAspect : 0,
         label: cgMode === 'expand' ? `Expandir ${aspectLabel}` : cgMode === 'remove' ? 'Remover objeto' : cgMode === 'enhance' ? 'Melhorar' : 'Edição',
       });
-      if (r && r.auto === false && r.reason === 'focus') {
+      if (r && r.notInstalled) {
+        setCgStatus((s) => ({ ...s, installed: false }));
+        toast({ kind: 'error', title: 'ChatGPT não instalado', message: 'Instale o aplicativo do ChatGPT para usar esta função.' });
+      } else if (r && r.auto === false && r.reason === 'focus') {
         toast({ kind: 'info', title: 'Cole manualmente no ChatGPT', message: 'A janela do ChatGPT não ficou em primeiro plano. Use os botões Copiar imagem / Copiar pedido.' });
       }
     } catch (err: any) {
@@ -630,8 +636,18 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
                 <span className="small muted">Pedido que vai para o ChatGPT (pode editar):</span>
                 <textarea className="input" value={prompt} onChange={(e) => { setPrompt(e.target.value); setPromptEdited(true); }} />
                 {promptEdited && <button className="small muted" style={{ alignSelf: 'flex-start' }} onClick={() => setPromptEdited(false)}>↺ voltar ao pedido automático</button>}
+                {cgStatus.installed === false && (
+                  <div className="cg-missing">
+                    <b className="small">É necessário instalar o aplicativo do ChatGPT</b>
+                    <span className="muted small">Esta função usa o app do ChatGPT para Windows (não o site). Instale pela Microsoft Store, entre na sua conta e volte aqui.</span>
+                    <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                      <Btn className="sm primary" onClick={() => api.invoke('chatgpt:store')}><Download size={13} /> Instalar o ChatGPT</Btn>
+                      <Btn className="sm ghost" onClick={() => api.invoke('chatgpt:status').then(setCgStatus)}><RefreshCcw size={13} /> Já instalei</Btn>
+                    </div>
+                  </div>
+                )}
                 <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                  <Btn className="sm primary" onClick={sendToChatGpt} disabled={!base || !!busy}><MessageSquare size={14} /> Enviar para o ChatGPT</Btn>
+                  <Btn className="sm primary" onClick={sendToChatGpt} disabled={!base || !!busy || cgStatus.installed === false}><MessageSquare size={14} /> Enviar para o ChatGPT</Btn>
                 </div>
                 {cgStatus.waiting && (
                   <div className="cg-wait">

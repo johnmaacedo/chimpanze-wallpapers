@@ -1963,6 +1963,25 @@ ol.steps li + li {
   padding: 12px;
   display: flex;
 }
+.parallax-opts {
+  flex-direction: column;
+  gap: 10px;
+  margin: 2px 0 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #ffb5470d;
+  border: 1px solid #ffb5472e;
+  display: flex;
+}
+.cg-missing {
+  background: #ff6f610f;
+  border: 1px solid #ff6f6166;
+  border-radius: 12px;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  display: flex;
+}
 textarea.input {
   resize: vertical;
   height: auto;

@@ -10,12 +10,14 @@ App pessoal do John (Electron 44 + React 19 + Vite + TypeScript, Windows). Leia 
 ## Situação do código
 - O código-fonte original da 1.4.0 se perdeu; foi recuperado do instalador.
 - `electron/` é o da 1.4.0 (JS legível, completo).
-- `src/` foi reconstruído a partir da interface 1.4.0 compilada (`referencia-1.4.0-ui/`, só para consulta): páginas Monitores, Galeria, Editor, Upscale e Ajustes; motor de transições (`src/wallpaper/`) com as 40 transições; `src/hub.html` (página escondida que abre as janelas de wallpaper). O CSS gerado é idêntico ao da 1.4.0.
+- `src/` foi reconstruído a partir da interface 1.4.0 compilada (`referencia-1.4.0-ui/`, só para consulta): páginas Monitores, Galeria, Editor, Upscale e Ajustes; motor de transições (`src/wallpaper/`), hoje com 75 transições (1.5.0); `src/hub.html` (página escondida que abre as janelas de wallpaper). O CSS gerado é idêntico ao da 1.4.0.
 - Editor: pipeline WebGL em `src/ui/editor/gl.ts`; página em `src/ui/pages/Editor.tsx`.
-- Binários grandes (`resources/bin/upscaler`, `resources/models/lama.onnx`) ficam fora do Git; copie da instalação (`%LOCALAPPDATA%\Programs\ChimpanzeWallpapers\resources\`).
+- 1.5.0: parallax 2.5D (Depth Anything V2 Small em `electron/ai/depth*.js`, mapas em cache em `%APPDATA%\Chimpanzé Wallpapers\depth`), chave geral na página Monitores; shaders compilam em segundo plano (KHR_parallel_shader_compile).
+- Binários grandes (`resources/bin/upscaler`, `resources/models/lama.onnx`, `resources/models/depth-anything-v2-small.onnx`) ficam fora do Git; copie da instalação (`%LOCALAPPDATA%\Programs\ChimpanzeWallpapers\resources\`).
 - O npm 11+ bloqueia scripts de instalação: depois de `npm install`, rode `node node_modules/electron/install.js` se o Electron não tiver baixado.
 
 ## Decisões do John
 - Desistiu de wallpapers animados e de IA generativa local (expandir/reconstruir não funcionou).
-- Borracha: só a rápida (LaMa). Edição pesada por IA: app desktop do ChatGPT com macros.
+- Borracha: só a rápida (LaMa). Edição pesada por IA: app desktop do ChatGPT com macros (o app novo é o pacote "OpenAI.Codex"; novo chat = Ctrl+N).
+- Parallax: efeito permanente com uma chave geral para todos os monitores, na página Monitores (não em Ajustes).
 - Quer zoom nas imagens do Editor e do Upscale e comparação antes/depois do upscale.

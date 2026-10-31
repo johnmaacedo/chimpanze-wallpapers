@@ -17,17 +17,24 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let cachedAppId = null;
 
-/** AppUserModelID of the ChatGPT desktop app (Microsoft Store / MSIX). */
+/**
+ * AppUserModelID of the ChatGPT desktop app (Microsoft Store / MSIX). Since
+ * late 2026 it ships as the "OpenAI.Codex" package, still named "ChatGPT" in
+ * the Start menu. Only a hit is cached, so installing it later is noticed.
+ */
 function findApp() {
   if (cachedAppId) return Promise.resolve(cachedAppId);
   if (process.platform !== 'win32') return Promise.resolve(null);
   return new Promise((resolve) => {
-    const ps = "Get-StartApps | Where-Object { $_.Name -match '^ChatGPT' -and $_.AppID -notmatch '^https?:' } | Select-Object -First 1 -ExpandProperty AppID";
+    const ps = "$a = Get-StartApps | Where-Object { $_.AppID -notmatch '^https?:' -and $_.AppID -match '!' }; "
+      + "$hit = $a | Where-Object { $_.Name -eq 'ChatGPT' } | Select-Object -First 1; "
+      + "if (-not $hit) { $hit = $a | Where-Object { $_.Name -match '^ChatGPT' -or $_.AppID -match '^OpenAI\\.' } | Select-Object -First 1 }; "
+      + "if ($hit) { $hit.AppID }";
     execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { windowsHide: true, timeout: 15000 }, (err, out) => {
       const id = String(out || '').trim().split(/\r?\n/)[0];
-      cachedAppId = id || null;
+      if (id) cachedAppId = id;
       if (err) log.warn('chatgpt: Get-StartApps falhou', err.message);
-      resolve(cachedAppId);
+      resolve(id || null);
     });
   });
 }
@@ -37,16 +44,24 @@ function launch(appId) {
   spawn('explorer.exe', [`shell:AppsFolder\\${appId}`], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
 }
 
-const isChatGpt = (fg) => !!fg && /chatgpt/i.test(fg.title || '');
+// The desktop app's executable (never a browser tab that happens to say "ChatGPT").
+const EXE_RE = /[\\/]ChatGPT\.exe$/i;
+const isChatGpt = (fg) => !!fg && (fg.exe ? EXE_RE.test(fg.exe) : fg.title === 'ChatGPT');
 
-async function waitForeground(platform, timeoutMs) {
+/** Waits for the ChatGPT window to exist, then pulls it to the front. */
+async function bringToFront(platform, timeoutMs, alive) {
   const t0 = Date.now();
-  while (Date.now() - t0 < timeoutMs) {
-    const fg = platform.foregroundWindow();
-    if (isChatGpt(fg)) return true;
-    await sleep(250);
+  let lastFocus = 0;
+  while (Date.now() - t0 < timeoutMs && alive()) {
+    if (isChatGpt(platform.foregroundWindow())) return true;
+    const w = platform.findAppWindow(EXE_RE);
+    if (w && w.visible && Date.now() - lastFocus > 700) {
+      lastFocus = Date.now();
+      platform.focusWindow(w.hwnd);
+    }
+    await sleep(200);
   }
-  return false;
+  return isChatGpt(platform.foregroundWindow());
 }
 
 /** Content fingerprint that survives the clipboard re-encoding the PNG. */
@@ -111,11 +126,16 @@ class ChatGptBridge extends EventEmitter {
     try { for (const f of fs.readdirSync(dl)) s.known.add(f); } catch (_) { /* ignore */ }
 
     s.sentHash = await imageToClipboard(opts.image);
+    // A cold start (app closed or only in the tray) needs time to load the chat UI
+    // after the window appears; an open window is ready almost at once.
+    const before = this.platform.findAppWindow(EXE_RE);
+    const warm = !!(before && before.visible);
     launch(appId);
     this.watch(s);
 
-    const focused = await waitForeground(this.platform, 20000);
-    if (this.session !== s) return { auto: false };
+    const alive = () => this.session === s;
+    const focused = await bringToFront(this.platform, warm ? 12000 : 45000, alive);
+    if (!alive()) return { auto: false };
     if (!focused) {
       this.setStage('ChatGPT aberto. Cole a imagem (Ctrl+V) e o pedido, que já está copiado.');
       return { auto: false, reason: 'focus' };
@@ -124,21 +144,34 @@ class ChatGptBridge extends EventEmitter {
       this.setStage('Imagem copiada. No ChatGPT: Ctrl+V, depois cole o pedido (botão "Copiar pedido").');
       return { auto: false };
     }
-    // Macro: each step only runs while ChatGPT still has the keyboard focus.
+    // Macro: each step re-checks that the ChatGPT desktop window still has the
+    // keyboard (pulling it back once if something stole the focus).
     const step = async (keys, wait, label) => {
-      if (this.session !== s) throw new Error('cancelado');
-      if (!isChatGpt(this.platform.foregroundWindow())) throw new Error('foco');
+      if (!alive()) throw new Error('cancelado');
+      if (!isChatGpt(this.platform.foregroundWindow()) && !(await bringToFront(this.platform, 3000, alive))) throw new Error('foco');
       if (label) this.setStage(label);
       this.platform.sendKeys(keys);
       await sleep(wait);
     };
     try {
-      await sleep(1200); // window finishes painting
-      if (opts.newChat) await step(['CTRL', 'SHIFT', 'O'], 1500, 'Abrindo conversa nova…');
-      await step(['CTRL', 'V'], 3000, 'Colando a imagem…');
+      this.setStage(warm ? 'Preparando o ChatGPT…' : 'Esperando o ChatGPT carregar…');
+      await sleep(warm ? 900 : 6000);
+      // Ctrl+N = "Novo chat" in the current app (the old one used Ctrl+Shift+O);
+      // a new chat also puts the cursor in the message box.
+      if (opts.newChat) await step(['CTRL', 'N'], 1800, 'Abrindo conversa nova…');
+      // Clear any draft left in the message box from an earlier attempt.
+      await step(['CTRL', 'A'], 150);
+      await step(['DELETE'], 300);
+      await step(['CTRL', 'V'], 3500, 'Colando a imagem…');
       await clipboard.writeText(opts.prompt);
-      await step(['CTRL', 'V'], 600, 'Escrevendo o pedido…');
-      if (opts.autoSend) await step(['ENTER'], 300, 'Enviando…');
+      await step(['CTRL', 'V'], 800, 'Escrevendo o pedido…');
+      if (opts.autoSend) {
+        // Enter is ignored while the picture is still uploading, so press it a few
+        // times; once sent, Enter on the empty box does nothing.
+        await step(['ENTER'], 2500, 'Enviando…');
+        await step(['ENTER'], 2500);
+        await step(['ENTER'], 200);
+      }
       this.setStage(opts.autoSend
         ? 'Enviado. Quando a imagem ficar pronta, baixe ou copie ela no ChatGPT, e o app pega sozinho.'
         : 'Tudo colado. Confira e aperte Enter no ChatGPT.');
@@ -164,7 +197,10 @@ class ChatGptBridge extends EventEmitter {
       const full = path.join(dl, name);
       let st;
       try { st = fs.statSync(full); } catch (_) { return; }
-      if (st.mtimeMs < s.startedAt - 2000 || st.size < 10000) return;
+      if (Math.max(st.mtimeMs, st.birthtimeMs || 0) < s.startedAt - 2000 || st.size < 10000) return;
+      // ChatGPT saves PNG/WebP ("ChatGPT Image …"); a JPG named otherwise is some
+      // other download (e.g. from the browser) and must not be taken as the answer.
+      if (!/chatgpt|image|imagem/i.test(name) && !/\.(png|webp)$/i.test(name)) return;
       // Wait until the size stops changing (download finished).
       const prev = seen.get(name);
       seen.set(name, st.size);

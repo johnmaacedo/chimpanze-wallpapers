@@ -6,6 +6,7 @@ const { EventEmitter } = require('events');
 const library = require('./library');
 const { mediaUrl } = require('./protocol');
 const log = require('./log');
+const depth = require('./ai/depth');
 
 const CATALOG = require('./transitions.json');
 const TRANSITIONS = CATALOG.list.map((t) => t.id);
@@ -82,7 +83,61 @@ class Scheduler extends EventEmitter {
       fit: cfg.fit || 'cover',
       kenBurns: !!cfg.kenBurns && !g.reduceMotion,
       intensity: Number(g.transitionIntensity) || 1,
+      parallax: this.parallaxOn(),
+      parallaxStrength: Math.max(0.3, Math.min(2, Number(g.parallaxStrength) || 1)),
+      parallaxMouse: g.parallaxMouse !== false,
     };
+  }
+
+  /** 2.5D depth parallax: one global switch for every monitor (needs the depth model). */
+  parallaxOn() {
+    const g = this.config.global;
+    return !!g.parallax && !g.reduceMotion && depth.exists();
+  }
+
+  /** Sends a depth map to a monitor once it is ready (if the picture is still the one shown). */
+  lateDepth(id, file, tok, url) {
+    depth.get(file).then((d) => {
+      const s = this.st(id);
+      const host = this.hosts.get(id);
+      if (tok !== s.showToken || !host || !this.parallaxOn()) return;
+      host.depth({ url, depthUrl: mediaUrl(d) });
+    }).catch((err) => {
+      if (!this._depthWarned) { this._depthWarned = true; log.warn('depth: não consegui gerar o mapa', err.message); }
+    });
+  }
+
+  /** Parallax switched on: give every monitor showing a picture its depth map. */
+  refreshDepth() {
+    if (!this.parallaxOn()) return;
+    for (const mon of this.monitors.monitors) {
+      const host = this.hosts.get(mon.id);
+      const last = host && host.lastShow;
+      if (!last || last.type !== 'image' || last.depthUrl || !last.path) continue;
+      this.lateDepth(mon.id, last.path, this.st(mon.id).showToken, last.url);
+    }
+  }
+
+  /** Prepares the depth map of the picture that comes next, so it arrives with parallax. */
+  async prefetchDepth(id) {
+    if (!this.parallaxOn()) return;
+    try {
+      const cfg = this.config.monitor(id);
+      const s = this.st(id);
+      if (!cfg.folder || cfg.fixed) return;
+      let nextFile = null;
+      if (cfg.order === 'sequential') {
+        const items = await library.listMedia(cfg.folder, { includeSubfolders: cfg.includeSubfolders });
+        const paths = items.map((i) => i.path);
+        const idx = paths.indexOf(cfg.current);
+        nextFile = paths[(idx + 1) % paths.length];
+      } else {
+        nextFile = s.bag[0];
+      }
+      if (!nextFile || library.mediaType(nextFile) !== 'image') return;
+      const shown = this.config.global.preferUpscaled ? library.bestVersion(nextFile) : (library.editedPathFor(nextFile) || nextFile);
+      await depth.get(shown);
+    } catch (_) { /* best effort */ }
   }
 
   reschedule(id) {
@@ -202,18 +257,36 @@ class Scheduler extends EventEmitter {
     let easing = cfg.easing === 'inherit' ? g.easing : cfg.easing;
     if (!EASINGS.includes(easing)) easing = 'easeInOutCubic';
     const duration = g.reduceMotion ? 450 : (cfg.transitionMs || g.transitionMs || 1600);
-    const host = this.hosts.get(id);
-    if (host) {
+    const msg = {
+      url: mediaUrl(shown),
+      path: shown,
+      type,
+      transition: g.reduceMotion ? 'fade' : transition,
+      duration,
+      easing,
+      instant: !!opts.instant,
+    };
+    const tok = s.showToken = (s.showToken || 0) + 1;
+    const send = (depthFile) => {
+      const host = this.hosts.get(id);
+      if (tok !== s.showToken || !host) return;
       host.setSettings(this.rendererSettings(cfg));
-      host.show({
-        url: mediaUrl(shown),
-        path: shown,
-        type,
-        transition: g.reduceMotion ? 'fade' : transition,
-        duration,
-        easing,
-        instant: !!opts.instant,
-      });
+      host.show(depthFile ? Object.assign({ depthUrl: mediaUrl(depthFile) }, msg) : msg);
+    };
+    if (type === 'image' && this.parallaxOn()) {
+      const ready = depth.cached(shown);
+      if (ready) send(ready);
+      else if (opts.instant) { send(null); this.lateDepth(id, shown, tok, msg.url); }
+      else {
+        // A new picture waits a moment for its depth so it arrives already in 3D;
+        // if that takes too long it shows flat and the depth fades in later.
+        let timer;
+        Promise.race([depth.get(shown), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('timeout')), 4500); })])
+          .then((d) => { clearTimeout(timer); send(d); }, () => { clearTimeout(timer); send(null); this.lateDepth(id, shown, tok, msg.url); });
+      }
+      setTimeout(() => this.prefetchDepth(id), duration + 2500);
+    } else {
+      send(null);
     }
     if (g.syncWindows === 'always' && type === 'image') {
       setTimeout(() => this.syncWindowsWallpaper(id, shown), duration + 400);
