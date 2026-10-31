@@ -11,7 +11,7 @@ const depth = require('./ai/depth');
 const CATALOG = require('./transitions.json');
 const TRANSITIONS = CATALOG.list.map((t) => t.id);
 const SOFT = CATALOG.list.filter((t) => t.cat === 'soft' || t.cat === 'motion').map((t) => t.id);
-const PAR_STYLES = ['orbit', 'walk', 'travel', 'dolly', 'float'];
+const PAR_STYLES = ['orbit', 'walk', 'travel', 'dolly', 'float', 'breathe', 'sway'];
 const PAR_PRESETS = ['auto', 'anime', 'landscape', 'real', 'custom'];
 const clampNum = (v, lo, hi, dflt) => { const n = Number(v); return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : dflt; };
 const EASINGS = ['easeInOutCubic', 'easeInOutQuint', 'easeOutExpo', 'easeInOutSine', 'easeOutBack', 'linear', 'easeOutQuart', 'easeInOutExpo', 'spring', 'springBounce', 'apple'];
@@ -91,6 +91,8 @@ class Scheduler extends EventEmitter {
       parallaxSpeed: clampNum(g.parallaxSpeed, 0.1, 4, 1),
       parallaxStyle: PAR_STYLES.includes(g.parallaxStyle) ? g.parallaxStyle : 'orbit',
       parallaxPreset: PAR_PRESETS.includes(g.parallaxPreset) ? g.parallaxPreset : 'auto',
+      parallaxMotion: g.parallaxMotion === 'auto' || PAR_STYLES.includes(g.parallaxMotion) ? g.parallaxMotion : 'auto',
+      parallaxBlink: g.parallaxBlink !== false,
       parallaxDolly: clampNum(g.parallaxDolly, 0, 3, 1),
       parallaxFocus: clampNum(g.parallaxFocus, 0, 1, 0.35),
       parallaxBlur: clampNum(g.parallaxBlur, 0, 1, 0.2),
@@ -110,7 +112,7 @@ class Scheduler extends EventEmitter {
       const s = this.st(id);
       const host = this.hosts.get(id);
       if (tok !== s.showToken || !host || !this.parallaxOn()) return;
-      host.depth({ url, depthUrl: mediaUrl(r.depth), plateUrl: mediaUrl(r.plate), analysis: r.analysis });
+      host.depth({ url, depthUrl: mediaUrl(r.depth), plateUrl: mediaUrl(r.plate), lidsUrl: r.lids ? mediaUrl(r.lids) : null, analysis: r.analysis });
     }).catch((err) => {
       if (!this._depthWarned) { this._depthWarned = true; log.warn('depth: não consegui gerar o mapa', err.message); }
     });
@@ -280,7 +282,7 @@ class Scheduler extends EventEmitter {
       const host = this.hosts.get(id);
       if (tok !== s.showToken || !host) return;
       host.setSettings(this.rendererSettings(cfg));
-      host.show(d ? Object.assign({ depthUrl: mediaUrl(d.depth), plateUrl: mediaUrl(d.plate), analysis: d.analysis }, msg) : msg);
+      host.show(d ? Object.assign({ depthUrl: mediaUrl(d.depth), plateUrl: mediaUrl(d.plate), lidsUrl: d.lids ? mediaUrl(d.lids) : null, analysis: d.analysis }, msg) : msg);
     };
     if (type === 'image' && this.parallaxOn()) {
       const ready = depth.cached(shown);

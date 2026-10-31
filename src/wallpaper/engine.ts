@@ -18,6 +18,8 @@ export interface ShowMsg {
   depthUrl?: string;
   /** Background plate (characters removed) that fills what the camera uncovers. */
   plateUrl?: string;
+  /** The picture with its eyes painted over with skin (anime blinking). */
+  lidsUrl?: string | null;
   /** What the picture is and how far it can move without artifacts (from the depth pass). */
   analysis?: ParAnalysis | null;
 }
@@ -25,7 +27,10 @@ export interface ShowMsg {
 export interface ParAnalysis {
   kind: 'anime' | 'real' | 'landscape';
   count: number; cover: number; gap: number; busy: number; hair: number; band: number; style: ParStyle;
+  faces?: Box[]; eyes?: { cx: number; cy: number; hw: number; hh: number; ang: number; lash: [number, number]; face: number }[];
 }
+interface Box { x0: number; y0: number; x1: number; y1: number }
+export type ParMotion = 'auto' | ParStyle;
 export type ParPreset = 'auto' | 'anime' | 'landscape' | 'real' | 'custom';
 
 /**
@@ -57,7 +62,7 @@ const PAR_DOLLY = 0.12;
 const PAR_FADE_MS = 1400;
 /** One loop of the camera path at speed 1×, in seconds. */
 const PAR_PERIOD = 12;
-export type ParStyle = 'orbit' | 'walk' | 'travel' | 'dolly' | 'float';
+export type ParStyle = 'orbit' | 'walk' | 'travel' | 'dolly' | 'float' | 'breathe' | 'sway';
 
 /** Camera paths (one loop = phase 0..2π): [shift x, shift y, dolly]. */
 const PATHS: Record<ParStyle, (p: number) => [number, number, number]> = {
@@ -71,7 +76,12 @@ const PATHS: Record<ParStyle, (p: number) => [number, number, number]> = {
   dolly: (p) => [0.22 * Math.sin(p), 0.12 * Math.cos(p), 0.5 - 0.5 * Math.cos(p)],
   // Drifts in a lazy figure eight.
   float: (p) => [0.8 * Math.sin(p) + 0.2 * Math.sin(p * 2.3), 0.5 * Math.sin(p * 2 + 0.6), 0.25 * (0.5 + 0.5 * Math.sin(p * 1.5))],
+  // Breathes: a slow push-in and back, barely any sideways move.
+  breathe: (p) => [0.12 * Math.sin(p), 0.08 * Math.cos(p), 0.5 - 0.5 * Math.cos(p)],
+  // Sways like a pendulum: side to side, easing at the ends, a dip in the middle.
+  sway: (p) => [Math.sin(p), -0.2 * Math.cos(p * 2), 0.15 * (0.5 - 0.5 * Math.cos(p * 2))],
 };
+const Z_PEAK: Record<ParStyle, number> = { orbit: 0.35, walk: 1, travel: 0.25, dolly: 1, float: 0.5, breathe: 1, sway: 0.15 };
 
 const EASE: Record<string, (t: number) => number> = {
   linear: (t) => t,
@@ -116,7 +126,10 @@ class Media {
   url = '';
   depthTex: WebGLTexture | null = null;
   plateTex: WebGLTexture | null = null;
+  lidsTex: WebGLTexture | null = null;
   analysis: ParAnalysis | null = null;
+  /** Per face: when it blinks next, and the blink in progress (start, kind). */
+  blinks: { next: number; start: number; kind: 'single' | 'double' | 'wink'; eye: number }[] = [];
   /** When the depth map arrived (parallax fades in from there). */
   depthAt = 0;
   private video: HTMLVideoElement | null = null;
@@ -271,14 +284,18 @@ class Media {
   }
 
   /** Loads the packed depth map and the background plate used by the parallax. */
-  async loadDepth(url: string, plateUrl: string | undefined, fade: boolean): Promise<void> {
+  async loadDepth(url: string, plateUrl: string | undefined, fade: boolean, lidsUrl?: string | null): Promise<void> {
     const bitmap = async (u: string) => {
       const res = await fetch(u);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return createImageBitmap(await res.blob(), { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
     };
-    const [dbmp, pbmp] = await Promise.all([bitmap(url), plateUrl ? bitmap(plateUrl).catch(() => null) : Promise.resolve(null)]);
-    if (this.disposed) { dbmp.close(); pbmp?.close(); return; }
+    const [dbmp, pbmp, lbmp] = await Promise.all([
+      bitmap(url),
+      plateUrl ? bitmap(plateUrl).catch(() => null) : Promise.resolve(null),
+      lidsUrl ? bitmap(lidsUrl).catch(() => null) : Promise.resolve(null),
+    ]);
+    if (this.disposed) { dbmp.close(); pbmp?.close(); lbmp?.close(); return; }
     const gl = this.gl;
     const up = (tex: WebGLTexture | null, bmp: ImageBitmap, mips: boolean) => {
       const t = tex || gl.createTexture()!;
@@ -296,6 +313,7 @@ class Media {
     };
     this.depthTex = up(this.depthTex, dbmp, false);
     if (pbmp) this.plateTex = up(this.plateTex, pbmp, true);
+    if (lbmp) this.lidsTex = up(this.lidsTex, lbmp, false);
     this.depthAt = fade ? performance.now() : -1e9;
   }
 
@@ -304,6 +322,7 @@ class Media {
     try { this.gl.deleteTexture(this.tex); } catch (_) { /* ignore */ }
     if (this.depthTex) { try { this.gl.deleteTexture(this.depthTex); } catch (_) { /* ignore */ } }
     if (this.plateTex) { try { this.gl.deleteTexture(this.plateTex); } catch (_) { /* ignore */ } }
+    if (this.lidsTex) { try { this.gl.deleteTexture(this.lidsTex); } catch (_) { /* ignore */ } }
     if (this.video) { this.video.pause(); this.video.removeAttribute('src'); this.video.load(); this.video = null; }
     if (this.frame) { try { this.frame.close(); } catch (_) { /* ignore */ } }
     if (this.decoder) { try { this.decoder.close(); } catch (_) { /* ignore */ } }
@@ -336,6 +355,8 @@ export class Engine {
   private parBlur = 0.2;
   private parMouse = true;
   private parPreset: ParPreset = 'auto';
+  private parMotion: ParMotion = 'auto';
+  private parBlink = true;
   /** Camera path phase (radians), integrated so speed changes never jump. */
   private parPhase = 0;
   /** Global parallax amount, eased toward 0/1 when the switch changes. */
@@ -441,7 +462,7 @@ export class Engine {
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) fail(`link ${name}: ${gl.getProgramInfoLog(prog)}`);
     gl.detachShader(prog, vs); gl.detachShader(prog, fs);
     gl.deleteShader(vs); gl.deleteShader(fs);
-    const names = ['uFrom', 'uTo', 'uFromSize', 'uToSize', 'uRes', 'uProgress', 'uTime', 'uSeed', 'uFit', 'uFromZoom', 'uToZoom', 'uFromPan', 'uToPan', 'uHasFrom', 'uFromMips', 'uToMips', 'uIntensity', 'uMbSamples', 'uShutter', 'uFromDepth', 'uToDepth', 'uFromPlate', 'uToPlate', 'uFromPar', 'uToPar', 'uFromPar2', 'uToPar2'];
+    const names = ['uFrom', 'uTo', 'uFromSize', 'uToSize', 'uRes', 'uProgress', 'uTime', 'uSeed', 'uFit', 'uFromZoom', 'uToZoom', 'uFromPan', 'uToPan', 'uHasFrom', 'uFromMips', 'uToMips', 'uIntensity', 'uMbSamples', 'uShutter', 'uFromDepth', 'uToDepth', 'uFromPlate', 'uToPlate', 'uFromPar', 'uToPar', 'uFromPar2', 'uToPar2', 'uFromLids', 'uToLids', 'uFromEye', 'uToEye', 'uFromBlink', 'uToBlink', 'uFromEyes', 'uToEyes', 'uFromLash', 'uToLash'];
     const loc: Record<string, WebGLUniformLocation | null> = {};
     for (const n of names) loc[n] = gl.getUniformLocation(prog, n);
     p = { prog, loc };
@@ -472,8 +493,10 @@ export class Engine {
   setSettings(s: {
     fit?: Fit; kenBurns?: boolean; intensity?: number; parallax?: boolean; parallaxStrength?: number; parallaxMouse?: boolean;
     parallaxSpeed?: number; parallaxStyle?: ParStyle; parallaxDolly?: number; parallaxFocus?: number; parallaxBlur?: number;
-    parallaxPreset?: ParPreset;
+    parallaxPreset?: ParPreset; parallaxMotion?: ParMotion; parallaxBlink?: boolean;
   }) {
+    if (s.parallaxMotion && (s.parallaxMotion === 'auto' || s.parallaxMotion in PATHS)) this.parMotion = s.parallaxMotion;
+    if (typeof s.parallaxBlink === 'boolean') this.parBlink = s.parallaxBlink;
     if (s.parallaxPreset && ['auto', 'anime', 'landscape', 'real', 'custom'].includes(s.parallaxPreset)) this.parPreset = s.parallaxPreset;
     const num = (v: unknown, lo: number, hi: number) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : null);
     this.parSpeed = num(s.parallaxSpeed, 0.1, 4) ?? this.parSpeed;
@@ -498,11 +521,11 @@ export class Engine {
   }
 
   /** Depth map that arrived after the picture (fades the parallax in). */
-  async setDepth(msg: { url: string; depthUrl: string; plateUrl?: string; analysis?: ParAnalysis | null }) {
+  async setDepth(msg: { url: string; depthUrl: string; plateUrl?: string; lidsUrl?: string | null; analysis?: ParAnalysis | null }) {
     const m = this.to && this.to.url === msg.url ? this.to : null;
     if (!m) return;
     m.analysis = msg.analysis || null;
-    try { await m.loadDepth(msg.depthUrl, msg.plateUrl, true); } catch (err: any) { this.onError?.(`Profundidade: ${err.message || err}`); }
+    try { await m.loadDepth(msg.depthUrl, msg.plateUrl, true, msg.lidsUrl); } catch (err: any) { this.onError?.(`Profundidade: ${err.message || err}`); }
     this.kick();
   }
 
@@ -526,7 +549,7 @@ export class Engine {
       // Mipmaps always: the blur transitions sample lower mip levels.
       await media.load(msg, this.canvas.width, this.canvas.height, true);
       // Depth that is ready up front comes in without a fade (the picture arrives in 3D).
-      if (msg.depthUrl) await media.loadDepth(msg.depthUrl, msg.plateUrl, false).catch(() => {});
+      if (msg.depthUrl) await media.loadDepth(msg.depthUrl, msg.plateUrl, false, msg.lidsUrl).catch(() => {});
       media.analysis = msg.analysis || null;
     } catch (err: any) {
       media.dispose();
@@ -595,15 +618,63 @@ export class Engine {
     }
     const kind = this.parPreset === 'auto' ? a.kind : this.parPreset;
     const r = RECIPES[kind];
-    const style: ParStyle = this.parPreset === 'auto' ? (a.kind === 'landscape' ? 'travel' : a.count > 2 ? 'float' : r.style) : r.style;
+    const style: ParStyle = this.parMotion !== 'auto' ? this.parMotion
+      : this.parPreset === 'auto' ? (a.kind === 'landscape' ? 'travel' : a.count > 2 ? 'float' : r.style) : r.style;
     // A touch of depth of field hides the rebuilt strip on detailed backgrounds.
     const blur = kind === 'landscape' ? 0 : r.blur + 0.2 * a.busy;
     // Relative slide of the characters against the background = shift × depth gap
     // (+ half the dolly at the frame edges). Solve the shift for the safe band.
     const want = (safeBand(kind, a) * this.parStrength) / 1920 / Math.max(0.06, a.gap);
-    const zPeak = ({ orbit: 0.35, walk: 1, travel: 0.25, dolly: 1, float: 0.5 } as Record<ParStyle, number>)[style];
+    const zPeak = Z_PEAK[style];
     const amp = want / (1 + 0.5 * r.dolly * zPeak);
     return { style, focus: r.focus, blur, speed: r.speed, amp, dolly: amp * r.dolly };
+  }
+
+  /**
+   * Blinks of one picture: each face blinks on its own clock (every 2.5–7 s);
+   * mostly a single blink, sometimes a double one, rarely a wink with one eye.
+   * A blink = close in 90 ms, stay shut 50 ms, reopen in 160 ms.
+   */
+  private blinkAmounts(m: Media, now: number): number[] {
+    const a = m.analysis;
+    const eyes = (a && a.eyes) || [];
+    const on = this.parBlink && this.parAmt > 0.5 && !!m.lidsTex && eyes.length > 0 && !this.paused &&
+      (this.parPreset === 'auto' ? a!.kind === 'anime' : this.parPreset !== 'landscape');
+    if (!on) return [];
+    const faces = Math.max(...eyes.map((e) => e.face)) + 1;
+    while (m.blinks.length < faces) m.blinks.push({ next: now + 1500 + Math.random() * 4000, start: -1e9, kind: 'single', eye: 0 });
+    const curve = (t: number) => (t < 0 || t > 300 ? 0 : t < 90 ? (t / 90) ** 2 : t < 140 ? 1 : 1 - ((t - 140) / 160) ** 0.8);
+    const out: number[] = [];
+    for (const [fi, b] of m.blinks.entries()) {
+      if (now >= b.next) {
+        const r = Math.random();
+        b.kind = r < 0.06 ? 'wink' : r < 0.2 ? 'double' : 'single';
+        b.eye = Math.random() < 0.5 ? 0 : 1;
+        b.start = now;
+        b.next = now + 2500 + Math.random() * 4500 + (b.kind === 'double' ? 400 : 0);
+      }
+      const t = now - b.start;
+      const v = Math.max(curve(t), b.kind === 'double' ? curve(t - 380) : 0);
+      const faceEyes = eyes.map((e, i) => ({ e, i })).filter((x) => x.e.face === fi).sort((p, q) => p.e.cx - q.e.cx);
+      faceEyes.forEach((x, k) => { out[x.i] = b.kind === 'wink' && k !== b.eye ? 0 : v; });
+    }
+    return eyes.map((_, i) => out[i] || 0);
+  }
+
+  private blinkUniforms(L: Record<string, WebGLUniformLocation | null>, m: Media, now: number, which: 'From' | 'To', unit: number) {
+    const gl = this.gl;
+    const amts = this.blinkAmounts(m, now);
+    const eyes = ((m.analysis && m.analysis.eyes) || []).slice(0, 6);
+    const n = amts.length ? eyes.length : 0;
+    const boxes = new Float32Array(24); const ks = new Float32Array(6); const lash = new Float32Array(24);
+    eyes.forEach((e, i) => { boxes.set([e.cx, e.cy, e.hw, e.hh], i * 4); ks[i] = amts[i] || 0; lash.set([e.lash[0], e.lash[1], e.ang, 0], i * 4); });
+    gl.uniform4fv(L[`u${which}Lash`], lash);
+    gl.uniform4fv(L[`u${which}Eye[0]`] ?? L[`u${which}Eye`], boxes);
+    gl.uniform1fv(L[`u${which}Blink[0]`] ?? L[`u${which}Blink`], ks);
+    gl.uniform1i(L[`u${which}Eyes`], n);
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, m.lidsTex || this.blackTex);
+    gl.uniform1i(L[`u${which}Lids`], unit);
   }
 
   private parCamera(m: Media, now: number): [number, number, number, number] {
@@ -705,6 +776,8 @@ export class Engine {
     gl.uniform4f(L.uToPar, pt[0], pt[1], pt[2], pt[3]);
     gl.uniform2f(L.uFromPar2, sf.focus, sf.blur);
     gl.uniform2f(L.uToPar2, st.focus, st.blur);
+    this.blinkUniforms(L, fromM, now, 'From', 6);
+    this.blinkUniforms(L, this.to, now, 'To', 7);
     gl.activeTexture(gl.TEXTURE4);
     gl.bindTexture(gl.TEXTURE_2D, fromM.plateTex || this.blackTex);
     gl.uniform1i(L.uFromPlate, 4);

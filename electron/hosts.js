@@ -168,7 +168,7 @@ class WallpaperHost extends EventEmitter {
 
   /** Late depth map for the picture on screen (2.5D parallax). */
   depth(msg) {
-    const extra = { depthUrl: msg.depthUrl, plateUrl: msg.plateUrl, analysis: msg.analysis };
+    const extra = { depthUrl: msg.depthUrl, plateUrl: msg.plateUrl, lidsUrl: msg.lidsUrl, analysis: msg.analysis };
     if (this.lastShow && this.lastShow.url === msg.url) this.lastShow = Object.assign({}, this.lastShow, extra);
     if (this.pendingShow && this.pendingShow.url === msg.url) { Object.assign(this.pendingShow, extra); return; }
     if (this.ready) this.send('wp:depth', msg);
