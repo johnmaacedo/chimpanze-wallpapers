@@ -14,13 +14,34 @@ export interface ShowMsg {
   duration: number;
   easing: string;
   instant?: boolean;
-  /** Depth map of the picture (white = near) for the 2.5D parallax. */
+  /** Packed depth map (R fg depth, G bg depth, B matte) for the 2.5D parallax. */
   depthUrl?: string;
+  /** Background plate (characters removed) that fills what the camera uncovers. */
+  plateUrl?: string;
 }
 
-/** Parallax camera: how far (in image width) the nearest layer travels at most. */
-const PAR_AMP = 0.016;
+/** Parallax camera: how far (in image width) the nearest layer travels at 100%. */
+const PAR_AMP = 0.045;
+/** Dolly (push-in) at 100%: how much nearer layers grow relative to farther ones. */
+const PAR_DOLLY = 0.12;
 const PAR_FADE_MS = 1400;
+/** One loop of the camera path at speed 1×, in seconds. */
+const PAR_PERIOD = 12;
+export type ParStyle = 'orbit' | 'walk' | 'travel' | 'dolly' | 'float';
+
+/** Camera paths (one loop = phase 0..2π): [shift x, shift y, dolly]. */
+const PATHS: Record<ParStyle, (p: number) => [number, number, number]> = {
+  // Circles around the subject, like an isometric turntable.
+  orbit: (p) => [Math.cos(p), 0.55 * Math.sin(p), 0.35 * (0.5 - 0.5 * Math.cos(p * 2))],
+  // Walks toward the scene and back with a light head bob.
+  walk: (p) => [0.35 * Math.sin(p), 0.16 * Math.sin(p * 4), 0.5 - 0.5 * Math.cos(p)],
+  // Slides side to side along the scene.
+  travel: (p) => [Math.sin(p), 0.12 * Math.sin(p * 2), 0.25 * (0.5 - 0.5 * Math.cos(p * 2))],
+  // Pushes in toward the subject and pulls back out.
+  dolly: (p) => [0.22 * Math.sin(p), 0.12 * Math.cos(p), 0.5 - 0.5 * Math.cos(p)],
+  // Drifts in a lazy figure eight.
+  float: (p) => [0.8 * Math.sin(p) + 0.2 * Math.sin(p * 2.3), 0.5 * Math.sin(p * 2 + 0.6), 0.25 * (0.5 + 0.5 * Math.sin(p * 1.5))],
+};
 
 const EASE: Record<string, (t: number) => number> = {
   linear: (t) => t,
@@ -64,6 +85,7 @@ class Media {
   kbSeed = Math.random() * 1000;
   url = '';
   depthTex: WebGLTexture | null = null;
+  plateTex: WebGLTexture | null = null;
   /** When the depth map arrived (parallax fades in from there). */
   depthAt = 0;
   private video: HTMLVideoElement | null = null;
@@ -217,23 +239,32 @@ class Media {
     if (!p && this.decoder) this.nextFrameAt = performance.now();
   }
 
-  /** Loads the depth map (single channel) used by the parallax. */
-  async loadDepth(url: string, fade: boolean): Promise<void> {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const bmp = await createImageBitmap(await res.blob());
-    if (this.disposed) { bmp.close(); return; }
+  /** Loads the packed depth map and the background plate used by the parallax. */
+  async loadDepth(url: string, plateUrl: string | undefined, fade: boolean): Promise<void> {
+    const bitmap = async (u: string) => {
+      const res = await fetch(u);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return createImageBitmap(await res.blob(), { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+    };
+    const [dbmp, pbmp] = await Promise.all([bitmap(url), plateUrl ? bitmap(plateUrl).catch(() => null) : Promise.resolve(null)]);
+    if (this.disposed) { dbmp.close(); pbmp?.close(); return; }
     const gl = this.gl;
-    const t = this.depthTex || gl.createTexture()!;
-    gl.bindTexture(gl.TEXTURE_2D, t);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, gl.RED, gl.UNSIGNED_BYTE, bmp);
-    bmp.close();
-    this.depthTex = t;
+    const up = (tex: WebGLTexture | null, bmp: ImageBitmap, mips: boolean) => {
+      const t = tex || gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bmp);
+      if (mips) gl.generateMipmap(gl.TEXTURE_2D);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, mips ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR);
+      bmp.close();
+      return t;
+    };
+    this.depthTex = up(this.depthTex, dbmp, false);
+    if (pbmp) this.plateTex = up(this.plateTex, pbmp, true);
     this.depthAt = fade ? performance.now() : -1e9;
   }
 
@@ -241,6 +272,7 @@ class Media {
     this.disposed = true;
     try { this.gl.deleteTexture(this.tex); } catch (_) { /* ignore */ }
     if (this.depthTex) { try { this.gl.deleteTexture(this.depthTex); } catch (_) { /* ignore */ } }
+    if (this.plateTex) { try { this.gl.deleteTexture(this.plateTex); } catch (_) { /* ignore */ } }
     if (this.video) { this.video.pause(); this.video.removeAttribute('src'); this.video.load(); this.video = null; }
     if (this.frame) { try { this.frame.close(); } catch (_) { /* ignore */ } }
     if (this.decoder) { try { this.decoder.close(); } catch (_) { /* ignore */ } }
@@ -266,7 +298,14 @@ export class Engine {
   private intensity = 1;
   private parallax = false;
   private parStrength = 1;
+  private parSpeed = 1;
+  private parStyle: ParStyle = 'orbit';
+  private parDolly = 1;
+  private parFocus = 0.35;
+  private parBlur = 0.2;
   private parMouse = true;
+  /** Camera path phase (radians), integrated so speed changes never jump. */
+  private parPhase = 0;
   /** Global parallax amount, eased toward 0/1 when the switch changes. */
   private parAmt = 0;
   private parT0 = performance.now();
@@ -292,7 +331,7 @@ export class Engine {
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
     this.blackTex = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, this.blackTex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, 1, 1, 0, gl.RED, gl.UNSIGNED_BYTE, new Uint8Array([0]));
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
     canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); if (this.reloadOnLoss) location.reload(); });
     this.resize();
     this.ro = new ResizeObserver(() => { this.resize(); this.kick(); });
@@ -370,7 +409,7 @@ export class Engine {
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) fail(`link ${name}: ${gl.getProgramInfoLog(prog)}`);
     gl.detachShader(prog, vs); gl.detachShader(prog, fs);
     gl.deleteShader(vs); gl.deleteShader(fs);
-    const names = ['uFrom', 'uTo', 'uFromSize', 'uToSize', 'uRes', 'uProgress', 'uTime', 'uSeed', 'uFit', 'uFromZoom', 'uToZoom', 'uFromPan', 'uToPan', 'uHasFrom', 'uFromMips', 'uToMips', 'uIntensity', 'uMbSamples', 'uShutter', 'uFromDepth', 'uToDepth', 'uFromPar', 'uToPar'];
+    const names = ['uFrom', 'uTo', 'uFromSize', 'uToSize', 'uRes', 'uProgress', 'uTime', 'uSeed', 'uFit', 'uFromZoom', 'uToZoom', 'uFromPan', 'uToPan', 'uHasFrom', 'uFromMips', 'uToMips', 'uIntensity', 'uMbSamples', 'uShutter', 'uFromDepth', 'uToDepth', 'uFromPlate', 'uToPlate', 'uFromPar', 'uToPar', 'uParFocus', 'uParBlur'];
     const loc: Record<string, WebGLUniformLocation | null> = {};
     for (const n of names) loc[n] = gl.getUniformLocation(prog, n);
     p = { prog, loc };
@@ -398,10 +437,19 @@ export class Engine {
     }
   }
 
-  setSettings(s: { fit?: Fit; kenBurns?: boolean; intensity?: number; parallax?: boolean; parallaxStrength?: number; parallaxMouse?: boolean }) {
+  setSettings(s: {
+    fit?: Fit; kenBurns?: boolean; intensity?: number; parallax?: boolean; parallaxStrength?: number; parallaxMouse?: boolean;
+    parallaxSpeed?: number; parallaxStyle?: ParStyle; parallaxDolly?: number; parallaxFocus?: number; parallaxBlur?: number;
+  }) {
+    const num = (v: unknown, lo: number, hi: number) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : null);
+    this.parSpeed = num(s.parallaxSpeed, 0.1, 4) ?? this.parSpeed;
+    this.parDolly = num(s.parallaxDolly, 0, 3) ?? this.parDolly;
+    this.parFocus = num(s.parallaxFocus, 0, 1) ?? this.parFocus;
+    this.parBlur = num(s.parallaxBlur, 0, 1) ?? this.parBlur;
+    if (s.parallaxStyle && s.parallaxStyle in PATHS) this.parStyle = s.parallaxStyle;
     if (s.fit && s.fit in FIT_INDEX) this.fit = s.fit;
     if (typeof s.parallax === 'boolean') this.parallax = s.parallax;
-    if (typeof s.parallaxStrength === 'number' && Number.isFinite(s.parallaxStrength)) this.parStrength = Math.max(0.3, Math.min(2, s.parallaxStrength));
+    if (typeof s.parallaxStrength === 'number' && Number.isFinite(s.parallaxStrength)) this.parStrength = Math.max(0.1, Math.min(3, s.parallaxStrength));
     if (typeof s.parallaxMouse === 'boolean') this.parMouse = s.parallaxMouse;
     if (typeof s.kenBurns === 'boolean') this.kenBurns = s.kenBurns;
     if (typeof s.intensity === 'number' && Number.isFinite(s.intensity)) this.intensity = Math.max(0.2, Math.min(2, s.intensity));
@@ -416,10 +464,10 @@ export class Engine {
   }
 
   /** Depth map that arrived after the picture (fades the parallax in). */
-  async setDepth(msg: { url: string; depthUrl: string }) {
+  async setDepth(msg: { url: string; depthUrl: string; plateUrl?: string }) {
     const m = this.to && this.to.url === msg.url ? this.to : null;
     if (!m) return;
-    try { await m.loadDepth(msg.depthUrl, true); } catch (err: any) { this.onError?.(`Profundidade: ${err.message || err}`); }
+    try { await m.loadDepth(msg.depthUrl, msg.plateUrl, true); } catch (err: any) { this.onError?.(`Profundidade: ${err.message || err}`); }
     this.kick();
   }
 
@@ -443,7 +491,7 @@ export class Engine {
       // Mipmaps always: the blur transitions sample lower mip levels.
       await media.load(msg, this.canvas.width, this.canvas.height, true);
       // Depth that is ready up front comes in without a fade (the picture arrives in 3D).
-      if (msg.depthUrl) await media.loadDepth(msg.depthUrl, false).catch(() => {});
+      if (msg.depthUrl) await media.loadDepth(msg.depthUrl, msg.plateUrl, false).catch(() => {});
     } catch (err: any) {
       media.dispose();
       this.onError?.(`Falha ao carregar ${decodeURIComponent(msg.url.split('/').pop() || '')}: ${err.message || err}`);
@@ -493,35 +541,31 @@ export class Engine {
   }
 
   /**
-   * Parallax camera for one picture: a slow figure-eight drift plus a lean
-   * toward the mouse (followed by a critically damped spring, so it never
-   * jerks). Returns the shift in image uv and the amount.
+   * Parallax camera for one picture: a looping camera path (orbit, walk,
+   * travelling, push-in or float) plus a lean toward the mouse, which follows a
+   * critically damped spring so it never jerks. Returns [shift x, shift y,
+   * dolly, amount] in image uv.
    */
-  private parCamera(m: Media, now: number): [number, number, number] {
-    if (!m.depthTex || this.parAmt < 0.001) return [0, 0, 0];
+  private parCamera(m: Media, now: number): [number, number, number, number] {
+    if (!m.depthTex || this.parAmt < 0.001) return [0, 0, 0, 0];
     const fade = Math.min(1, (now - m.depthAt) / PAR_FADE_MS);
     const amt = this.parAmt * fade * fade * (3 - 2 * fade);
-    const t = (now - this.parT0) / 1000;
-    const s = this.parSeed;
-    let vx = Math.sin(t * 0.27 + s) * 0.55 + Math.sin(t * 0.61 + s * 2.1) * 0.12;
-    let vy = Math.sin(t * 0.19 + s * 1.7) * 0.32 + Math.cos(t * 0.47 + s) * 0.08;
+    let [vx, vy, vz] = PATHS[this.parStyle](this.parPhase + this.parSeed);
     if (this.parMouse && now - this.pointer.at < 20000) {
-      // Mouse lean dominates while the cursor is around; the drift stays underneath.
-      const w = this.pointer.inside ? 1 : 0.5;
-      vx = vx * 0.35 + this.pointer.x * 0.9 * w;
-      vy = vy * 0.35 + this.pointer.y * 0.9 * w;
+      const w = this.pointer.inside ? 0.6 : 0.3;
+      vx += this.pointer.x * w;
+      vy += this.pointer.y * w;
     }
-    const len = Math.hypot(vx, vy);
-    if (len > 1.2) { vx *= 1.2 / len; vy *= 1.2 / len; }
     const asp = this.canvas.width / Math.max(1, this.canvas.height);
     const a = PAR_AMP * this.parStrength;
-    // Near things slide against the cursor, like looking past them from that side.
-    return [-vx * a, vy * a * asp * 0.75, amt];
+    // Near things slide against the camera, like looking past them from that side.
+    return [-vx * a, vy * a * asp * 0.75, vz * PAR_DOLLY * this.parDolly * Math.min(2, this.parStrength), amt];
   }
 
   private stepParallax(now: number) {
     const dt = Math.min(0.1, Math.max(0, (now - (this.lastFrame || now)) / 1000));
     this.lastFrame = now;
+    this.parPhase = (this.parPhase + dt * this.parSpeed * (2 * Math.PI / PAR_PERIOD)) % (Math.PI * 2000);
     const target = this.parallax ? 1 : 0;
     this.parAmt += (target - this.parAmt) * (1 - Math.exp(-dt * 2.2));
     if (Math.abs(target - this.parAmt) < 0.002) this.parAmt = target;
@@ -590,12 +634,22 @@ export class Engine {
     const kt = this.kb(this.to, now);
     const pf = this.parCamera(fromM, now);
     const pt = this.parCamera(this.to, now);
-    // Overscan so the shifted layers never reveal the picture's border.
-    const over = (p: number[]) => 1 + 1.4 * Math.hypot(p[0], p[1]) * p[2] + 0.004 * p[2];
+    // Overscan so the shifted layers never reveal the picture's border: the
+    // farthest a pixel can travel is the shift/dolly times its distance to the focus.
+    const far = Math.max(this.parFocus, 1 - this.parFocus);
+    const over = (p: number[]) => 1 + (2 * Math.hypot(p[0], p[1]) + Math.abs(p[2])) * far * p[3] + 0.004 * p[3];
     gl.uniform1f(L.uFromZoom, kf.zoom * over(pf));
     gl.uniform1f(L.uToZoom, kt.zoom * over(pt));
-    gl.uniform3f(L.uFromPar, pf[0], pf[1], pf[2]);
-    gl.uniform3f(L.uToPar, pt[0], pt[1], pt[2]);
+    gl.uniform4f(L.uFromPar, pf[0], pf[1], pf[2], pf[3]);
+    gl.uniform4f(L.uToPar, pt[0], pt[1], pt[2], pt[3]);
+    gl.uniform1f(L.uParFocus, this.parFocus);
+    gl.uniform1f(L.uParBlur, this.parBlur);
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, fromM.plateTex || this.blackTex);
+    gl.uniform1i(L.uFromPlate, 4);
+    gl.activeTexture(gl.TEXTURE5);
+    gl.bindTexture(gl.TEXTURE_2D, this.to.plateTex || this.blackTex);
+    gl.uniform1i(L.uToPlate, 5);
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, fromM.depthTex || this.blackTex);
     gl.uniform1i(L.uFromDepth, 2);

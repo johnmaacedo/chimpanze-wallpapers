@@ -11,6 +11,8 @@ const depth = require('./ai/depth');
 const CATALOG = require('./transitions.json');
 const TRANSITIONS = CATALOG.list.map((t) => t.id);
 const SOFT = CATALOG.list.filter((t) => t.cat === 'soft' || t.cat === 'motion').map((t) => t.id);
+const PAR_STYLES = ['orbit', 'walk', 'travel', 'dolly', 'float'];
+const clampNum = (v, lo, hi, dflt) => { const n = Number(v); return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : dflt; };
 const EASINGS = ['easeInOutCubic', 'easeInOutQuint', 'easeOutExpo', 'easeInOutSine', 'easeOutBack', 'linear', 'easeOutQuart', 'easeInOutExpo', 'spring', 'springBounce', 'apple'];
 
 /** Random pick that honours the user's "use in random" switches and avoids repeating the last one. */
@@ -84,7 +86,12 @@ class Scheduler extends EventEmitter {
       kenBurns: !!cfg.kenBurns && !g.reduceMotion,
       intensity: Number(g.transitionIntensity) || 1,
       parallax: this.parallaxOn(),
-      parallaxStrength: Math.max(0.3, Math.min(2, Number(g.parallaxStrength) || 1)),
+      parallaxStrength: clampNum(g.parallaxStrength, 0.1, 3, 1),
+      parallaxSpeed: clampNum(g.parallaxSpeed, 0.1, 4, 1),
+      parallaxStyle: PAR_STYLES.includes(g.parallaxStyle) ? g.parallaxStyle : 'orbit',
+      parallaxDolly: clampNum(g.parallaxDolly, 0, 3, 1),
+      parallaxFocus: clampNum(g.parallaxFocus, 0, 1, 0.35),
+      parallaxBlur: clampNum(g.parallaxBlur, 0, 1, 0.2),
       parallaxMouse: g.parallaxMouse !== false,
     };
   }
@@ -97,11 +104,11 @@ class Scheduler extends EventEmitter {
 
   /** Sends a depth map to a monitor once it is ready (if the picture is still the one shown). */
   lateDepth(id, file, tok, url) {
-    depth.get(file).then((d) => {
+    depth.get(file).then((r) => {
       const s = this.st(id);
       const host = this.hosts.get(id);
       if (tok !== s.showToken || !host || !this.parallaxOn()) return;
-      host.depth({ url, depthUrl: mediaUrl(d) });
+      host.depth({ url, depthUrl: mediaUrl(r.depth), plateUrl: mediaUrl(r.plate) });
     }).catch((err) => {
       if (!this._depthWarned) { this._depthWarned = true; log.warn('depth: não consegui gerar o mapa', err.message); }
     });
@@ -267,11 +274,11 @@ class Scheduler extends EventEmitter {
       instant: !!opts.instant,
     };
     const tok = s.showToken = (s.showToken || 0) + 1;
-    const send = (depthFile) => {
+    const send = (d) => {
       const host = this.hosts.get(id);
       if (tok !== s.showToken || !host) return;
       host.setSettings(this.rendererSettings(cfg));
-      host.show(depthFile ? Object.assign({ depthUrl: mediaUrl(depthFile) }, msg) : msg);
+      host.show(d ? Object.assign({ depthUrl: mediaUrl(d.depth), plateUrl: mediaUrl(d.plate) }, msg) : msg);
     };
     if (type === 'image' && this.parallaxOn()) {
       const ready = depth.cached(shown);

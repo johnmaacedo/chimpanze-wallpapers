@@ -1,14 +1,18 @@
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ImagePlus, FolderInput, Cpu, X, FolderSearch, Columns2 } from 'lucide-react';
+import { ImagePlus, FolderInput, Cpu, X, FolderSearch, Columns2, Images } from 'lucide-react';
 import { api, useStore, mediaUrl, fileName, type MediaItem } from '../api';
 import { Btn, Segmented, SwitchRow } from '../components/controls';
 import { ZoomView } from '../components/ZoomView';
+import { GalleryPicker, UpscaleConfirm } from '../components/UpscalePicker';
 
 export function UpscalePage() {
   const { state, setGlobal, jobs, toast } = useStore();
   const [models, setModels] = useState<Record<string, { label: string; kind: string }>>({});
   const [selected, setSelected] = useState<string | null>(null);
+  const [picking, setPicking] = useState(false);
+  // Pictures waiting for the user's go-ahead (nothing starts without it).
+  const [pending, setPending] = useState<string[] | null>(null);
   useEffect(() => { api.invoke('upscale:models').then(setModels).catch(() => {}); }, []);
   if (!state) return null;
   const u = state.config.global.upscale;
@@ -21,7 +25,14 @@ export function UpscalePage() {
 
   const addFiles = async () => {
     const files = await api.invoke<string[]>('dialog:files', { title: 'Imagens para upscale', multi: true });
-    if (files.length) { await api.invoke('upscale:start', files, {}); toast({ kind: 'info', title: `${files.length} imagem(ns) na fila` }); }
+    if (files.length) setPending(files);
+  };
+  const start = async () => {
+    const files = pending || [];
+    setPending(null);
+    if (!files.length) return;
+    await api.invoke('upscale:start', files, {});
+    toast({ kind: 'info', title: `${files.length} imagem(ns) na fila`, message: 'Processadas uma por vez na GPU.' });
   };
   const addFolder = async () => {
     const f = await api.invoke<string | null>('dialog:folder', 'Pasta para upscale');
@@ -29,8 +40,7 @@ export function UpscalePage() {
     const items = await api.invoke<MediaItem[]>('media:list', f, {});
     const list = items.filter((i) => i.type === 'image' && !i.upscaled).map((i) => i.path);
     if (!list.length) { toast({ kind: 'info', title: 'Nada para fazer', message: 'Nenhuma imagem sem versão 4K nessa pasta.' }); return; }
-    await api.invoke('upscale:start', list, {});
-    toast({ kind: 'info', title: `${list.length} imagens na fila`, message: 'Processadas uma por vez na GPU.' });
+    setPending(list);
   };
 
   return (
@@ -38,11 +48,12 @@ export function UpscalePage() {
       <div className="page-head">
         <div>
           <h1>Upscale 4K</h1>
-          <p>Real-ESRGAN rodando na sua RTX via Vulkan, com modelos separados para anime e para foto. Depois um Lanczos3 acerta a resolução exata da tela. O original nunca é alterado: a versão 4K vai para a subpasta _4K e passa a ser usada automaticamente.</p>
+          <p>Real-ESRGAN na sua RTX, com modelos para anime e para foto. O original nunca muda: a versão 4K vai para a subpasta _4K e passa a ser usada sozinha.</p>
         </div>
         <div className="actions">
+          <Btn className="primary" onClick={() => setPicking(true)}><Images size={16} /> Escolher da galeria</Btn>
+          <Btn onClick={addFiles}><ImagePlus size={16} /> Do computador</Btn>
           <Btn onClick={addFolder}><FolderInput size={16} /> Pasta inteira</Btn>
-          <Btn className="primary" onClick={addFiles}><ImagePlus size={16} /> Escolher imagens</Btn>
         </div>
       </div>
 
@@ -98,7 +109,7 @@ export function UpscalePage() {
 
       <div className="panel" style={{ marginTop: 18 }}>
         <h3>Fila <span className="sub">{upJobs.filter((j) => j.status === 'queued' || j.status === 'running').length} pendente(s)</span></h3>
-        {!upJobs.length && <div className="muted">Nenhum upscale ainda. Escolha imagens ou uma pasta.</div>}
+        {!upJobs.length && <div className="muted">Nenhum upscale ainda. Escolha imagens da galeria, do computador ou uma pasta inteira.</div>}
         <AnimatePresence initial={false}>
           {upJobs.slice(0, 40).map((j) => (
             <motion.div key={j.id} className={`job ${shown && shown.id === j.id ? 'sel' : ''}`} layout onClick={() => setSelected(j.id)} style={{ cursor: 'pointer' }}
@@ -125,6 +136,11 @@ export function UpscalePage() {
           ))}
         </AnimatePresence>
       </div>
+
+      <AnimatePresence>
+        {picking && <GalleryPicker key="pick" onClose={() => setPicking(false)} onPick={(paths) => { setPicking(false); setPending(paths); }} />}
+        {pending && <UpscaleConfirm key="confirm" files={pending} onClose={() => setPending(null)} onConfirm={start} />}
+      </AnimatePresence>
     </div>
   );
 }

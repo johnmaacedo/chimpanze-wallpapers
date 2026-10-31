@@ -5,6 +5,7 @@ import { api, useStore, folderName, type MediaItem } from '../api';
 import { Tile } from '../components/Tile';
 import { Lightbox } from '../components/Lightbox';
 import { Btn, Segmented } from '../components/controls';
+import { UpscaleConfirm } from '../components/UpscalePicker';
 
 export function GalleryPage({ onEdit }: { onEdit: (p: string) => void }) {
   const { state, mediaVersion, toast } = useStore();
@@ -23,6 +24,7 @@ export function GalleryPage({ onEdit }: { onEdit: (p: string) => void }) {
   const [filter, setFilter] = useState<'all' | 'image' | 'anim' | 'nok' | 'ed'>('all');
   const [q, setQ] = useState('');
   const [open, setOpen] = useState<number | null>(null);
+  const [pending, setPending] = useState<string[] | null>(null);
 
   useEffect(() => { if (!folder && folders.length) setFolder(folders[0].folder); }, [folders, folder]);
   useEffect(() => {
@@ -42,6 +44,11 @@ export function GalleryPage({ onEdit }: { onEdit: (p: string) => void }) {
   const upscaleAll = async () => {
     const list = shown.filter((i) => i.type === 'image' && !i.upscaled).map((i) => i.path);
     if (!list.length) { toast({ kind: 'info', title: 'Nada para fazer', message: 'Todas as imagens visíveis já têm versão 4K.' }); return; }
+    setPending(list);
+  };
+  const startUpscale = async () => {
+    const list = pending || [];
+    setPending(null);
     await api.invoke('upscale:start', list, {});
     toast({ kind: 'info', title: `${list.length} imagens na fila de upscale`, message: 'Elas são processadas uma por vez na GPU.' });
   };
@@ -98,6 +105,7 @@ export function GalleryPage({ onEdit }: { onEdit: (p: string) => void }) {
 
       <AnimatePresence>
         {open !== null && <Lightbox items={shown} index={open} onIndex={setOpen} onClose={() => setOpen(null)} onEdit={(p) => { setOpen(null); onEdit(p); }} />}
+        {pending && <UpscaleConfirm key="confirm" files={pending} onClose={() => setPending(null)} onConfirm={startUpscale} />}
       </AnimatePresence>
     </div>
   );

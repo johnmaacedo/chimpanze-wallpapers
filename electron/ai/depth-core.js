@@ -115,7 +115,10 @@ function dilate(src, W, H, r) {
   return out;
 }
 
-/** imageFile → 8-bit grayscale PNG depth map (white = near). */
+/**
+ * imageFile → packed depth PNG (RGB: foreground depth, background depth, matte)
+ * + a background plate JPEG with the characters removed.
+ */
 async function estimate(imageFile, outFile) {
   const sharp = require('../img');
   const t0 = Date.now();
@@ -149,24 +152,160 @@ async function estimate(imageFile, outFile) {
   // Up to the saved size, then edge-aware refinement guided by the picture.
   const ko = OUT_LONG / Math.max(iw, ih);
   const ow = Math.round(iw * Math.min(1, ko)); const oh = Math.round(ih * Math.min(1, ko));
+  const N2 = ow * oh;
   // extractChannel(0): sharp outputs 3 channels after a resize otherwise.
   const dUp = await sharp(d8, { raw: { width: pw, height: ph, channels: 1 } }).resize(ow, oh, { fit: 'fill', kernel: 'cubic' }).extractChannel(0).raw().toBuffer();
-  const gray = await sharp(imageFile, { limitInputPixels: false }).rotate().removeAlpha().resize(ow, oh, { fit: 'fill' }).greyscale().extractChannel(0).raw().toBuffer();
-  if (dUp.length !== ow * oh || gray.length !== ow * oh) throw new Error('Mapa de profundidade com tamanho inesperado.');
-  const I = new Float32Array(ow * oh); const p = new Float32Array(ow * oh);
-  for (let i = 0; i < ow * oh; i++) { I[i] = gray[i] / 255; p[i] = dUp[i] / 255; }
-  let q = guidedFilter(I, p, ow, oh, Math.max(3, Math.round(ow / 320)), 1e-4);
-  // Grow the near layer a little so a character's own outline moves with it
-  // (no thin halo of the background stuck to the edge), then soften the steps.
-  q = dilate(q, ow, oh, Math.max(2, Math.round(ow / 400)));
+  const rgbO = await sharp(imageFile, { limitInputPixels: false }).rotate().removeAlpha().resize(ow, oh, { fit: 'fill' }).raw().toBuffer();
+  if (dUp.length !== N2 || rgbO.length !== N2 * 3) throw new Error('Mapa de profundidade com tamanho inesperado.');
+  const I = new Float32Array(N2); const p = new Float32Array(N2);
+  for (let i = 0; i < N2; i++) {
+    I[i] = (0.299 * rgbO[i * 3] + 0.587 * rgbO[i * 3 + 1] + 0.114 * rgbO[i * 3 + 2]) / 255;
+    p[i] = dUp[i] / 255;
+  }
+  const qRef = guidedFilter(I, p, ow, oh, Math.max(3, Math.round(ow / 320)), 1e-4);
+
+  // --- Two layers: what is in focus (characters) and the background behind it.
+  const t = otsu(qRef);
+  // Soft matte: a depth cut, then snapped to the picture's own edges so it
+  // follows hair strands and line art instead of the blurry depth outline.
+  let matte = new Float32Array(N2);
+  for (let i = 0; i < N2; i++) matte[i] = smooth(t - 0.05, t + 0.05, qRef[i]);
+  matte = guidedFilter(I, matte, ow, oh, Math.max(3, Math.round(ow / 320)), 2e-3);
+  // Firm up partial values: thin objects (a sword, fingers) must not end up half
+  // in each layer (that shows as a faint double).
+  for (let i = 0; i < N2; i++) matte[i] = smooth(0.12, 0.6, matte[i]);
+
+  // Depth the foreground layer moves with (grown a little so its outline travels with it).
+  let q = dilate(qRef, ow, oh, Math.max(2, Math.round(ow / 400)));
   q = boxBlur(q, ow, oh, Math.max(1, Math.round(ow / 640)));
-  const outBuf = Buffer.alloc(ow * oh);
-  for (let i = 0; i < ow * oh; i++) outBuf[i] = Math.round(255 * Math.min(1, Math.max(0, q[i])));
+
+  // Hole = where the characters are (grown a few pixels so thin hair strands are
+  // included). The background layer samples the source where a character used to
+  // be exactly there, so only this area has to be rebuilt; everything around it
+  // keeps its real pixels and its real depth.
+  const holeBin = new Float32Array(N2);
+  let holeCount = 0;
+  for (let i = 0; i < N2; i++) if (matte[i] > 0.06) holeBin[i] = 1;
+  const grown = dilate(holeBin, ow, oh, Math.max(2, Math.round(ow / 400)));
+  for (let i = 0; i < N2; i++) if (grown[i] > 0.5) holeCount++;
+  const useLayers = holeCount > N2 * 0.002 && holeCount < N2 * 0.95;
+
+  // Background depth: the hole filled in from the surroundings (no walls left).
+  const bgDepth = useLayers ? fillFromOutside(qRef, grown, ow, oh, 1) : Float32Array.from(qRef);
+  if (useLayers) for (let i = 0; i < N2; i++) if (grown[i] > 0.5) bgDepth[i] = Math.min(bgDepth[i], t);
+  const bgSmooth = boxBlur(bgDepth, ow, oh, Math.max(2, Math.round(ow / 200)));
+
+  // Background plate: the picture with the characters removed.
+  let plate = rgbO;
+  let plateBy = 'none';
+  if (useLayers) {
+    const mask = Buffer.alloc(N2);
+    for (let i = 0; i < N2; i++) mask[i] = grown[i] > 0.5 ? 255 : 0;
+    plate = Buffer.from(rgbO);
+    try {
+      // LaMa rebuilds texture well when the hole is a modest part of the picture;
+      // for characters filling most of the frame it invents dark mush, so those
+      // get the smooth fill pulled in from the surroundings instead.
+      if (holeCount > N2 * 0.22) throw new Error('personagem grande');
+      const lama = require('./lama-core');
+      if (!lama.exists()) throw new Error('sem LaMa');
+      for (const b of lama.maskBoxes(mask, ow, oh)) await lama.fillRegion(sharp, plate, ow, oh, mask, b, null, 1.6);
+      plateBy = 'lama';
+    } catch (err) {
+      // Fallback: colours pulled in from the edges of the hole.
+      if (err.message !== 'personagem grande') log.warn('depth: LaMa indisponível para o fundo, usando preenchimento suave', err.message);
+      plate = Buffer.from(rgbO);
+      const f = new Float32Array(N2 * 3);
+      for (let i = 0; i < N2 * 3; i++) f[i] = rgbO[i] / 255;
+      const filled = fillFromOutside(f, grown, ow, oh, 3);
+      // Soften the streaks of the ring fill (only inside the hole).
+      const r = Math.max(2, Math.round(ow / 256));
+      for (let c = 0; c < 3; c++) {
+        const plane = new Float32Array(N2);
+        for (let i = 0; i < N2; i++) plane[i] = filled[i * 3 + c];
+        const bl = boxBlur(plane, ow, oh, r);
+        for (let i = 0; i < N2; i++) plate[i * 3 + c] = Math.round(255 * Math.min(1, Math.max(0, grown[i] > 0.5 ? bl[i] : plane[i])));
+      }
+      plateBy = 'suave';
+    }
+  }
+
+  // Where the background layer shows the plate: the hole, feathered by a pixel.
+  const plateMask = boxBlur(grown, ow, oh, Math.max(1, Math.round(ow / 800)));
+
+  // Packed: R = foreground depth, G = background depth, B = matte, A = plate mask.
+  // (Loaded without premultiplication, so the alpha channel is plain data.)
+  const outBuf = Buffer.alloc(N2 * 4);
+  const u8 = (v) => Math.round(255 * Math.min(1, Math.max(0, v)));
+  for (let i = 0; i < N2; i++) {
+    outBuf[i * 4] = u8(q[i]);
+    outBuf[i * 4 + 1] = u8(bgSmooth[i]);
+    outBuf[i * 4 + 2] = u8(useLayers ? matte[i] : 0);
+    outBuf[i * 4 + 3] = u8(useLayers ? plateMask[i] : 0);
+  }
   await fs.promises.mkdir(path.dirname(outFile), { recursive: true });
   const tmp = outFile + '.tmp.png';
-  await sharp(outBuf, { raw: { width: ow, height: oh, channels: 1 } }).png({ compressionLevel: 6 }).toFile(tmp);
-  await fs.promises.rename(tmp, outFile);
-  return { width: ow, height: oh, provider: sessionProvider, ms: Date.now() - t0 };
+  await sharp(outBuf, { raw: { width: ow, height: oh, channels: 4 } }).png({ compressionLevel: 6 }).toFile(tmp);
+  const plateFile = plateFor(outFile);
+  const tmpPlate = plateFile + '.tmp.jpg';
+  await sharp(plate, { raw: { width: ow, height: oh, channels: 3 } }).jpeg({ quality: 90, chromaSubsampling: '4:4:4' }).toFile(tmpPlate);
+  await fs.promises.rename(tmpPlate, plateFile);
+  await fs.promises.rename(tmp, outFile); // last: its presence means both files are complete
+  return { width: ow, height: oh, provider: sessionProvider, plate: plateBy, split: +t.toFixed(2), ms: Date.now() - t0 };
 }
 
-module.exports = { estimate, release, modelPath, exists: () => fs.existsSync(modelPath()) };
+const plateFor = (depthFile) => depthFile.replace(/\.png$/i, '.plate.jpg');
+
+function smooth(a, b, x) {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+}
+
+/** Otsu threshold on a 0..1 map: the depth that best splits near from far. */
+function otsu(v) {
+  const hist = new Float64Array(256);
+  for (let i = 0; i < v.length; i++) hist[Math.min(255, Math.max(0, Math.round(v[i] * 255)))]++;
+  let sum = 0; for (let i = 0; i < 256; i++) sum += i * hist[i];
+  let sumB = 0; let wB = 0; let best = 0; let th = 128;
+  for (let i = 0; i < 256; i++) {
+    wB += hist[i]; if (!wB) continue;
+    const wF = v.length - wB; if (!wF) break;
+    sumB += i * hist[i];
+    const mB = sumB / wB; const mF = (sum - sumB) / wF;
+    const between = wB * wF * (mB - mF) * (mB - mF);
+    if (between > best) { best = between; th = i; }
+  }
+  return Math.min(0.85, Math.max(0.25, (th + 0.5) / 255));
+}
+
+/**
+ * Fills the masked pixels (mask > 0.5) from the unmasked surroundings, ring by
+ * ring (normalised box blurs of growing radius). Works on `ch` interleaved channels.
+ */
+function fillFromOutside(src, mask, W, H, ch) {
+  const N = W * H;
+  const cur = Float32Array.from(src);
+  const known = new Float32Array(N);
+  for (let i = 0; i < N; i++) known[i] = mask[i] > 0.5 ? 0 : 1;
+  for (const r of [3, 6, 12, 24, 48, 96, 192]) {
+    const den = boxBlur(known, W, H, r);
+    const nums = [];
+    for (let c = 0; c < ch; c++) {
+      const plane = new Float32Array(N);
+      for (let i = 0; i < N; i++) plane[i] = cur[i * ch + c] * known[i];
+      nums.push(boxBlur(plane, W, H, r));
+    }
+    let left = 0;
+    for (let i = 0; i < N; i++) {
+      if (known[i]) continue;
+      if (den[i] > 0.02) {
+        for (let c = 0; c < ch; c++) cur[i * ch + c] = nums[c][i] / den[i];
+        known[i] = 1;
+      } else left++;
+    }
+    if (!left) break;
+  }
+  return cur;
+}
+
+module.exports = { estimate, release, modelPath, plateFor, exists: () => fs.existsSync(modelPath()) };

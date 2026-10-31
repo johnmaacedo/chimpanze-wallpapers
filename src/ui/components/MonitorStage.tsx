@@ -39,9 +39,13 @@ export function MonitorStage({ selected, onSelect, showOffline = true }: { selec
   const xs = [...rects.values()];
   const minX = Math.min(...xs.map((r) => r.x)); const minY = Math.min(...xs.map((r) => r.y));
   const maxX = Math.max(...xs.map((r) => r.x + r.width)); const maxY = Math.max(...xs.map((r) => r.y + r.height));
-  const gap = 18;
-  const avail = Math.max(300, width - 52);
-  const scale = Math.min(avail / (maxX - minX), 300 / (maxY - minY));
+  // Everything scales with the space available: the gap between screens and the
+  // stage height shrink with the window, so a restored (not maximized) window
+  // keeps the same proportions instead of squeezing the screens together.
+  const avail = Math.max(220, width - 8);
+  const maxH = Math.max(150, Math.min(300, width * 0.3));
+  const scale = Math.min(avail / (maxX - minX), maxH / (maxY - minY));
+  const gap = Math.max(8, Math.min(18, (maxX - minX) * scale * 0.012));
   const W = (maxX - minX) * scale; const H = (maxY - minY) * scale;
 
   return (
@@ -54,8 +58,7 @@ export function MonitorStage({ selected, onSelect, showOffline = true }: { selec
             return (
               <motion.div
                 key={m.id}
-                layout
-                className={`screen ${selected === m.id ? 'selected' : ''} ${m.offline ? 'offline' : ''}`}
+                className={`screen ${selected === m.id ? 'selected' : ''} ${m.offline ? 'offline' : ''} ${box.width < 300 ? 'compact' : ''} ${box.width < 190 ? 'tiny' : ''}`}
                 style={{ ...box, cursor: 'pointer' }}
                 initial={{ opacity: 0, y: 24, scale: 0.92 }}
                 animate={{ opacity: m.offline ? 0.45 : 1, y: 0, scale: 1 }}
