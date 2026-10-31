@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { app } = require('electron');
 const log = require('./log');
+const { defaultShortcuts } = require('./shortcuts');
 
 const CONFIG_VERSION = 1;
 
@@ -43,6 +44,7 @@ function defaultGlobal() {
       skipIfLarger: true,
     },
     editPresets: [],
+    shortcuts: defaultShortcuts(), // global keyboard shortcuts (see shortcuts.js)
     compactCorner: 'br',
     firstRunDone: false,
   };

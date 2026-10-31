@@ -26,6 +26,8 @@ export interface GlobalCfg {
   chatgpt: { autoType?: boolean; autoSend?: boolean; newChat?: boolean };
   upscale: { mode: string; animeModel: string; photoModel: string; artModel: string; target: string; format: string; gpu: string; skipIfLarger: boolean };
   editPresets: { name: string; adj: any }[];
+  /** Global keyboard shortcuts (electron/shortcuts.js). */
+  shortcuts?: { enabled: boolean; notify: boolean; allWithAlt: boolean; keys: Record<string, string>; off: string[] };
   compactCorner: string; firstRunDone: boolean;
 }
 export interface SchedState { monitors: Record<string, { nextAt: number; occluded: boolean; error: string; busy: boolean; historySize: number }>; globalPaused: boolean; now: number }
