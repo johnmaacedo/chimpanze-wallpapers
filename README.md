@@ -1,4 +1,4 @@
-# Chimpanzé Wallpapers — v1.5.3
+# Chimpanzé Wallpapers — v1.5.4
 
 Wallpapers independentes por monitor para Windows, com transições em GPU estilo motion design, profundidade 3D (parallax) com recorte por IA, personagens de anime que piscam, upscale 4K com IA e um editor de imagem. Tudo roda **local** na sua placa de vídeo.
 
@@ -6,7 +6,7 @@ Wallpapers independentes por monitor para Windows, com transições em GPU estil
 
 ## Instalar (usuário)
 
-1. Baixe `Chimpanze-Wallpapers-Setup-1.5.3.exe` na página **[Releases](../../releases)**.
+1. Baixe `Chimpanze-Wallpapers-Setup-1.5.4.exe` na página **[Releases](../../releases)**.
 2. Rode o instalador e siga os passos. Guia completo, passo a passo e com solução de problemas: **[docs/INSTALACAO.md](docs/INSTALACAO.md)**.
 
 Requisitos: Windows 10 ou 11 (64 bits), placa de vídeo com DirectX 12 (NVIDIA, AMD ou Intel) e cerca de 1,5 GB livres. A edição por IA do Editor usa o aplicativo do ChatGPT para Windows (opcional).
@@ -20,7 +20,7 @@ Requisitos: Windows 10 ou 11 (64 bits), placa de vídeo com DirectX 12 (NVIDIA, 
   - **rostos rígidos:** cada cabeça é detectada e se move como uma peça só, nunca entorta;
   - **análise automática** de cada wallpaper (anime, foto ou paisagem; quantos personagens; cabelo solto; fundo detalhado), que limita o movimento ao que a imagem aguenta sem defeitos;
   - presets Automático, Anime, Paisagem, Pessoas reais e Manual; 7 movimentos de câmera (Órbita, Caminhada, Travelling, Aproximação, Flutuar, Respiração, Balanço);
-  - **personagens de anime piscam** de vez em quando (piscada simples, dupla e, raramente, uma piscadela), só nos rostos em que o efeito fica natural.
+  - **personagens de anime piscam** de vez em quando (piscada simples, dupla e, raramente, uma piscadela), com pálpebra e cílios descendo juntos, só nos rostos em que o efeito fica natural. Tem um botão próprio ("Piscar dos olhos") e funciona mesmo com a profundidade 3D desligada.
 - **Upscale 4K/5K/8K** (Real-ESRGAN na GPU) escolhendo imagens da galeria do app, com confirmação e comparação antes/depois.
 - **Editor:** ajustes de imagem, recorte, borracha de marca d'água por IA (LaMa) e edição pelo app do ChatGPT.
 

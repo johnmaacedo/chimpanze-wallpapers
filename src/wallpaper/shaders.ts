@@ -125,7 +125,8 @@ vec3 blinkAt(vec3 c, sampler2D tex, sampler2D lids, vec2 s, float lod, float mip
     float u = loc.x / (2.0 * e.z) + 0.5;
     float v = loc.y / (2.0 * e.w) + 0.5;
     if (u < -0.12 || u > 1.12 || v < -0.05 || v > 1.05) continue;
-    float shift = k * max(0.0, 0.9 - l.y);
+    // The lash band comes down to the lower lid (about 80% down the frame).
+    float shift = k * max(0.0, 0.8 - l.y);
     vec3 skin = textureLod(lids, clamp(vec2(s.x, 1.0 - s.y), 0.0, 1.0), 0.0).rgb;
     vec3 o;
     if (v < l.x) {
@@ -137,6 +138,11 @@ vec3 blinkAt(vec3 c, sampler2D tex, sampler2D lids, vec2 s, float lod, float mip
       vec2 src = vec2(loc.x, loc.y - shift * 2.0 * e.w);
       vec2 q = e.xy + vec2(src.x * cs - src.y * sn, src.x * sn + src.y * cs);
       o = texAt(tex, vec2(q.x / ar, 1.0 - q.y), lod, mips).rgb;
+      // Only the lash strokes travel: lighter bits caught in the band (iris,
+      // white of the eye, a dark but coloured iris) turn into lid skin as the eye closes.
+      float chroma = max(o.r, max(o.g, o.b)) - min(o.r, min(o.g, o.b));
+      float lashy = (1.0 - smoothstep(0.22, 0.42, dot(o, vec3(0.299, 0.587, 0.114)))) * (1.0 - smoothstep(0.18, 0.32, chroma));
+      o = mix(o, skin, (1.0 - lashy) * smoothstep(0.2, 0.8, k));
     } else {
       o = mix(c, skin, smoothstep(0.55, 1.0, k)); // shut: no iris left under the line
     }

@@ -13,7 +13,7 @@
   - **Velocidade** do loop da câmera.
   - **Movimento:** Automático, Órbita, Caminhada, Travelling, Aproximação, Flutuar, Respiração ou Balanço.
   - **A cena também segue o mouse.**
-  - **Personagens de anime piscam:** cada rosto pisca no seu ritmo, a cada 2,5–7 s (às vezes piscada dupla; raramente uma piscadela). Só pisca o rosto em que o efeito fica natural: os dois olhos visíveis, cabeça não muito inclinada, olhos não gigantes e não desenhados já fechados.
+  - **Piscar dos olhos** (botão próprio, logo abaixo da chave da Profundidade 3D; funciona mesmo com a profundidade desligada): cada rosto de anime pisca no seu ritmo, a cada 2,5–7 s (às vezes piscada dupla; raramente uma piscadela). O olho fecha por inteiro: a pálpebra e os cílios de cima descem até a pálpebra de baixo. Só pisca o rosto em que o efeito fica natural: os dois olhos visíveis e de tamanhos parecidos, cabeça não muito inclinada nem virada, olhos não gigantes e não desenhados já fechados.
 - **Troca automática:** intervalo (de 30 s a 1 dia, ou personalizado), ordem aleatória ou em sequência, subpastas.
 - **Enquadramento:** Preencher, Ajustar (fundo desfocado), Esticar ou Centralizar; Ken Burns (zoom lento).
 
