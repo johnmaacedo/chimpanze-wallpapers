@@ -357,6 +357,7 @@ export class Engine {
   private parPreset: ParPreset = 'auto';
   private parMotion: ParMotion = 'auto';
   private parBlink = true;
+  private blinkTimer: any = 0;
   /** Camera path phase (radians), integrated so speed changes never jump. */
   private parPhase = 0;
   /** Global parallax amount, eased toward 0/1 when the switch changes. */
@@ -635,15 +636,31 @@ export class Engine {
    * mostly a single blink, sometimes a double one, rarely a wink with one eye.
    * A blink = close in 90 ms, stay shut 50 ms, reopen in 160 ms.
    */
+  private blinkOn(m: Media | null | undefined): m is Media {
+    const a = m && m.analysis;
+    return !!(a && a.eyes && a.eyes.length && m!.lidsTex && this.parBlink && !this.paused &&
+      (this.parPreset === 'auto' ? a.kind === 'anime' : this.parPreset !== 'landscape'));
+  }
+
+  /** Milliseconds until a blink needs frames (0 = blinking now, Infinity = never). */
+  private blinkWake(m: Media | null | undefined, now: number): number {
+    if (!this.blinkOn(m)) return Infinity;
+    let w = Infinity;
+    for (const b of m.blinks) {
+      if (now - b.start < 720) return 0; // a blink (or a double one) in progress
+      w = Math.min(w, Math.max(0, b.next - now));
+    }
+    return m.blinks.length ? w : 0;
+  }
+
   private blinkAmounts(m: Media, now: number): number[] {
     const a = m.analysis;
     const eyes = (a && a.eyes) || [];
-    const on = this.parBlink && this.parAmt > 0.5 && !!m.lidsTex && eyes.length > 0 && !this.paused &&
-      (this.parPreset === 'auto' ? a!.kind === 'anime' : this.parPreset !== 'landscape');
-    if (!on) return [];
+    if (!this.blinkOn(m)) return [];
     const faces = Math.max(...eyes.map((e) => e.face)) + 1;
     while (m.blinks.length < faces) m.blinks.push({ next: now + 1500 + Math.random() * 4000, start: -1e9, kind: 'single', eye: 0 });
-    const curve = (t: number) => (t < 0 || t > 300 ? 0 : t < 90 ? (t / 90) ** 2 : t < 140 ? 1 : 1 - ((t - 140) / 160) ** 0.8);
+    // Close fast (75 ms, easing out), stay shut 80 ms, reopen slower (150 ms).
+    const curve = (t: number) => (t < 0 || t > 305 ? 0 : t < 75 ? 1 - (1 - t / 75) ** 2 : t < 155 ? 1 : 1 - ((t - 155) / 150) ** 0.8);
     const out: number[] = [];
     for (const [fi, b] of m.blinks.entries()) {
       if (now >= b.next) {
@@ -807,5 +824,14 @@ export class Engine {
     const parActive = this.parAmt > 0.001 && !!(this.to.depthTex || fromM.depthTex);
     if (!this.paused && (this.transition !== 'idle' || this.kenBurns || animated || parActive || (this.parallax && this.parAmt < 1))) this.kick();
     else if (this.paused && this.transition !== 'idle') this.kick();
+    else {
+      // Still picture: sleep until the next blink instead of drawing every frame.
+      const wake = Math.min(this.blinkWake(this.to, now), this.from ? this.blinkWake(this.from, now) : Infinity);
+      if (wake === 0) this.kick();
+      else if (Number.isFinite(wake)) {
+        clearTimeout(this.blinkTimer);
+        this.blinkTimer = setTimeout(() => { this.blinkTimer = 0; this.kick(); }, Math.max(16, wake - 20));
+      }
+    }
   }
 }

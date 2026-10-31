@@ -115,6 +115,7 @@ function MonitorPanel({ id, toastErr }: { id: string; toastErr: (m: string) => v
   const [pickerOpen, setPickerOpen] = useState(isSpecific);
   const [pickerCat, setPickerCat] = useState(() => TRANSITION_LIST.find((t) => t.id === cfg.transition)?.cat || TRANSITION_CATEGORIES[0].id);
   const parOn = !!g.parallax && !!state!.depthModel;
+  const blinkOn = g.parallaxBlink !== false && !!state!.depthModel;
   const preset = g.parallaxPreset || 'auto';
   const par = (patch: Partial<typeof g>) => setGlobal(patch).catch((e) => toastErr(e.message));
 
@@ -226,6 +227,16 @@ function MonitorPanel({ id, toastErr }: { id: string; toastErr: (m: string) => v
             </div>
             <Toggle on={parOn} onChange={(v) => state!.depthModel && par({ parallax: v })} label="Profundidade 3D" />
           </div>
+          <div className={`blink-row ${blinkOn ? 'on' : ''}`}>
+            <span className="blink-ico"><Eye size={17} /></span>
+            <div className="txt">
+              <b>Piscar dos olhos</b>
+              <span>
+                Personagens de anime piscam de vez em quando, com pálpebra e cílios descendo juntos. Funciona mesmo com a profundidade 3D desligada.
+              </span>
+            </div>
+            <Toggle on={blinkOn} onChange={(v) => state!.depthModel && par({ parallaxBlink: v })} label="Piscar dos olhos" />
+          </div>
           <div className={`depth-body ${parOn ? '' : 'off'}`}>
             <span className="label">Preset</span>
             <div className="style-grid">
@@ -277,17 +288,12 @@ function MonitorPanel({ id, toastErr }: { id: string; toastErr: (m: string) => v
               </>
             )}
             <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, marginTop: 4 }}>
-              <div className="row" style={{ gap: 16, flexWrap: 'wrap' }}>
-                <label className="row small muted" style={{ gap: 8 }}>
-                  <Toggle on={g.parallaxMouse !== false} onChange={(v) => par({ parallaxMouse: v })} label="Seguir o mouse" /> A cena também segue o mouse
-                </label>
-                <label className="row small muted" style={{ gap: 8 }}>
-                  <Toggle on={g.parallaxBlink !== false} onChange={(v) => par({ parallaxBlink: v })} label="Piscar os olhos" /> <Eye size={14} /> Personagens de anime piscam
-                </label>
-              </div>
-              <Btn className="sm ghost" onClick={() => par({ parallaxPreset: 'auto', parallaxMotion: 'auto', parallaxBlink: true, parallaxStyle: 'orbit', parallaxStrength: 1, parallaxSpeed: 1, parallaxDolly: 1, parallaxBlur: 0.2, parallaxFocus: 0.35, parallaxMouse: true })}><RotateCcw size={13} /> Restaurar padrão</Btn>
+              <label className="row small muted" style={{ gap: 8 }}>
+                <Toggle on={g.parallaxMouse !== false} onChange={(v) => par({ parallaxMouse: v })} label="Seguir o mouse" /> A cena também segue o mouse
+              </label>
+              <Btn className="sm ghost" onClick={() => par({ parallaxPreset: 'auto', parallaxMotion: 'auto', parallaxStyle: 'orbit', parallaxStrength: 1, parallaxSpeed: 1, parallaxDolly: 1, parallaxBlur: 0.2, parallaxFocus: 0.35, parallaxMouse: true })}><RotateCcw size={13} /> Restaurar padrão</Btn>
             </div>
-            {g.reduceMotion && <span className="small muted">“Reduzir movimento” está ligado nos Ajustes, então o efeito fica parado.</span>}
+            {g.reduceMotion && <span className="small muted">“Reduzir movimento” está ligado nos Ajustes, então o efeito e a piscada ficam parados.</span>}
           </div>
         </div>
 

@@ -9,7 +9,7 @@ const { app, utilityProcess } = require('electron');
 const log = require('../log');
 
 const IDLE_MS = 30000;
-const VERSION = 4; // bump when the depth recipe changes (old maps are rebuilt)
+const VERSION = 5; // bump when the depth recipe changes (old maps are rebuilt)
 const MAX_CACHE = 1200; // files (each picture = depth PNG + background plate JPEG)
 let child = null;
 let idleTimer = null;

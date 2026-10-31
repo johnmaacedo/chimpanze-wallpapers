@@ -92,7 +92,7 @@ class Scheduler extends EventEmitter {
       parallaxStyle: PAR_STYLES.includes(g.parallaxStyle) ? g.parallaxStyle : 'orbit',
       parallaxPreset: PAR_PRESETS.includes(g.parallaxPreset) ? g.parallaxPreset : 'auto',
       parallaxMotion: g.parallaxMotion === 'auto' || PAR_STYLES.includes(g.parallaxMotion) ? g.parallaxMotion : 'auto',
-      parallaxBlink: g.parallaxBlink !== false,
+      parallaxBlink: g.parallaxBlink !== false && !g.reduceMotion,
       parallaxDolly: clampNum(g.parallaxDolly, 0, 3, 1),
       parallaxFocus: clampNum(g.parallaxFocus, 0, 1, 0.35),
       parallaxBlur: clampNum(g.parallaxBlur, 0, 1, 0.2),
@@ -106,12 +106,18 @@ class Scheduler extends EventEmitter {
     return !!g.parallax && !g.reduceMotion && depth.exists();
   }
 
+  /** Depth maps (and the eyes found with them) feed both the parallax and the blink. */
+  depthOn() {
+    const g = this.config.global;
+    return (!!g.parallax || g.parallaxBlink !== false) && !g.reduceMotion && depth.exists();
+  }
+
   /** Sends a depth map to a monitor once it is ready (if the picture is still the one shown). */
   lateDepth(id, file, tok, url) {
     depth.get(file).then((r) => {
       const s = this.st(id);
       const host = this.hosts.get(id);
-      if (tok !== s.showToken || !host || !this.parallaxOn()) return;
+      if (tok !== s.showToken || !host || !this.depthOn()) return;
       host.depth({ url, depthUrl: mediaUrl(r.depth), plateUrl: mediaUrl(r.plate), lidsUrl: r.lids ? mediaUrl(r.lids) : null, analysis: r.analysis });
     }).catch((err) => {
       if (!this._depthWarned) { this._depthWarned = true; log.warn('depth: não consegui gerar o mapa', err.message); }
@@ -120,7 +126,7 @@ class Scheduler extends EventEmitter {
 
   /** Parallax switched on: give every monitor showing a picture its depth map. */
   refreshDepth() {
-    if (!this.parallaxOn()) return;
+    if (!this.depthOn()) return;
     for (const mon of this.monitors.monitors) {
       const host = this.hosts.get(mon.id);
       const last = host && host.lastShow;
@@ -131,7 +137,7 @@ class Scheduler extends EventEmitter {
 
   /** Prepares the depth map of the picture that comes next, so it arrives with parallax. */
   async prefetchDepth(id) {
-    if (!this.parallaxOn()) return;
+    if (!this.depthOn()) return;
     try {
       const cfg = this.config.monitor(id);
       const s = this.st(id);
@@ -284,7 +290,7 @@ class Scheduler extends EventEmitter {
       host.setSettings(this.rendererSettings(cfg));
       host.show(d ? Object.assign({ depthUrl: mediaUrl(d.depth), plateUrl: mediaUrl(d.plate), lidsUrl: d.lids ? mediaUrl(d.lids) : null, analysis: d.analysis }, msg) : msg);
     };
-    if (type === 'image' && this.parallaxOn()) {
+    if (type === 'image' && this.depthOn()) {
       const ready = depth.cached(shown);
       if (ready) send(ready);
       else if (opts.instant) { send(null); this.lateDepth(id, shown, tok, msg.url); }

@@ -499,7 +499,7 @@ async function estimate(imageFile, outFile) {
     // Shape: an eye drawn shut (a wink) or half hidden is much flatter than its pair.
     const asp = oriented.map((o) => o.h / o.w);
     const shape = Math.min(...asp) / Math.max(...asp);
-    const ok = tilt <= 35 && ratio <= 1.9 && oriented.every((o) => o.h / oh <= 0.1) && es.every((e) => e.sc >= 0.45) && Math.min(oriented[0].w, oriented[1].w) / fw >= 0.1 && oriented.every((o) => o.lash[0] <= 0.25);
+    const ok = tilt <= 35 && ratio <= 1.5 && oriented.every((o) => o.h / oh <= 0.1) && es.every((e) => e.sc >= 0.45) && Math.min(oriented[0].w, oriented[1].w) / fw >= 0.1 && oriented.every((o) => o.lash[0] <= 0.4);
     if (ok) blinkEyes.push(...oriented.map((o) => Object.assign(o, { face: fi })));
     else log.info('depth: rosto', fi, 'sem piscar:', `inclinação ${tilt.toFixed(1)}°`, `tamanhos ${ratio.toFixed(2)}x`, `formato ${shape.toFixed(2)}`, `confiança ${es.map((e) => e.sc.toFixed(2)).join('/')}`, `cílios ${oriented.map((o) => o.lash[0]).join('/')}`);
   }
@@ -717,11 +717,11 @@ function orientedEye(I, W, H, e, ang) {
   let w = BW; let h = BH;
   if (den > 0.25) { w = (BW * c - BH * sn) / den; h = (BH * c - BW * sn) / den; }
   w = Math.max(w, BW * 0.6); h = Math.max(h, BH * 0.6);
-  w *= 1.38; h *= 1.3;
-  // Centre moved down along the face by the extra height (growth is downward).
+  // Grown both ways: detector boxes hug the iris, while the thick upper lash sits
+  // above it and the lower lid below; the whole eye must be inside the frame.
+  w *= 1.38; h *= 1.65;
   const cs = Math.cos(ang); const s2 = Math.sin(ang);
-  const dv = h * 0.09;
-  const cx = (e.x0 + e.x1) / 2 - s2 * dv; const cy = (e.y0 + e.y1) / 2 + cs * dv;
+  const cx = (e.x0 + e.x1) / 2; const cy = (e.y0 + e.y1) / 2;
   // Darkness profile along the turned vertical axis, across the middle of the eye.
   const rows = Math.max(6, Math.round(h));
   const dark = [];
@@ -740,25 +740,24 @@ function orientedEye(I, W, H, e, ang) {
 }
 
 /**
- * Upper lash band of a darkness profile, as [top, bottom] in 0..1: the first
- * clearly dark band from the top (in anime the lash line sits above the iris;
- * the darkest band can be the pupil, which must not be taken for the lashes).
+ * Upper lash band of a darkness profile, as [top, bottom] in 0..1. The frame
+ * has the eye in its middle, so the upper lash is the darkest horizontal band
+ * between the top margin (brows, bangs) and the eye's centre (the pupil); the
+ * band takes the lash's whole thickness, so all of it travels down.
  */
 function bandFromProfile(dark) {
   const H = dark.length;
   const sm = dark.map((_, i) => (dark[Math.max(0, i - 1)] + dark[i] + dark[Math.min(H - 1, i + 1)]) / 3);
-  const top = Math.max(2, Math.floor(H * 0.6));
-  let peak = 0; for (let i = 1; i < top; i++) if (sm[i] > sm[peak]) peak = i;
+  const lo = Math.floor(H * 0.12); const hi = Math.max(lo + 2, Math.floor(H * 0.46));
+  let peak = lo; for (let i = lo + 1; i < hi; i++) if (sm[i] > sm[peak]) peak = i;
   const sorted = sm.slice().sort((a, b) => a - b); const med = sorted[sorted.length >> 1];
-  const th = (sm[peak] + med) / 2;
-  let best = peak;
-  for (let i = 0; i < peak; i++) if (sm[i] > th) { best = i; while (best + 1 < peak && sm[best + 1] > sm[best]) best++; break; }
-  let a = best; let b = best;
-  while (a > 0 && sm[a - 1] > th) a--;
-  while (b < H - 1 && sm[b + 1] > th && b - a < H * 0.32) b++;
+  const th = med + (sm[peak] - med) * 0.45;
+  let a = peak; let b = peak;
+  while (a > 1 && sm[a - 1] > th && peak - a < H * 0.14) a--;
+  while (b < H - 1 && sm[b + 1] > th && b - peak < H * 0.1) b++;
   const l0 = a / H; let l1 = (b + 1) / H;
-  if (l1 - l0 < 0.08) l1 = Math.min(1, l0 + 0.08);
-  return [+l0.toFixed(3), +Math.min(l1, 0.6).toFixed(3)];
+  if (l1 - l0 < 0.06) l1 = l0 + 0.06;
+  return [+l0.toFixed(3), +Math.min(l1, 0.55).toFixed(3)];
 }
 
 /**

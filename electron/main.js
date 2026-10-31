@@ -487,7 +487,7 @@ function registerIpc() {
       const host = hosts.get(m.id);
       if (host) host.setSettings(scheduler.rendererSettings(config.monitor(m.id)));
     }
-    if (patch && ('parallax' in patch || 'reduceMotion' in patch)) scheduler.refreshDepth();
+    if (patch && ('parallax' in patch || 'parallaxBlink' in patch || 'reduceMotion' in patch)) scheduler.refreshDepth();
     updatePointerTimer();
     broadcast('state', publicState());
     return g;
