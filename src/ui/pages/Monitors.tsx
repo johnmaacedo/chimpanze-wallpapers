@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { FolderOpen, ScanSearch, MonitorSmartphone, SkipBack, SkipForward, Pin, PinOff, Trash, RefreshCw, Shuffle, ListOrdered, Sparkles, Feather, LayoutGrid, Layers3, Wand2, Timer, Frame, RotateCcw, Orbit, Footprints, MoveHorizontal, ZoomIn, Wind, ScanEye, Sparkle, Mountain, User, SlidersHorizontal } from 'lucide-react';
+import { FolderOpen, ScanSearch, MonitorSmartphone, SkipBack, SkipForward, Pin, PinOff, Trash, RefreshCw, Shuffle, ListOrdered, Sparkles, Feather, LayoutGrid, Layers3, Wand2, Timer, Frame, RotateCcw, Orbit, Footprints, MoveHorizontal, ZoomIn, Wind, ScanEye, Sparkle, Mountain, User, SlidersHorizontal, Activity, Waves, Eye } from 'lucide-react';
 import { api, useStore, useThumb, thumbUrl, fileName, folderName, TRANSITION_LABELS, TRANSITION_LIST, TRANSITION_CATEGORIES, EASING_LABELS, FIT_LABELS, type MonitorCfg, type MediaItem } from '../api';
 import { MonitorStage, useCountdown } from '../components/MonitorStage';
 import { Btn, Segmented, SwitchRow, Toggle } from '../components/controls';
@@ -247,6 +247,14 @@ function MonitorPanel({ id, toastErr }: { id: string; toastErr: (m: string) => v
                   <Slider label="Velocidade" value={g.parallaxSpeed ?? 1} min={0.3} max={3} step={0.05} fmt={(v) => `${v.toFixed(2).replace(/\.?0+$/, '')}×`} onChange={(v) => par({ parallaxSpeed: v })} />
                 </div>
                 {(g.parallaxStrength ?? 1) > 1.05 && <span className="small muted">Acima de 100% o movimento passa do limite seguro e podem aparecer marcas atrás do cabelo.</span>}
+                <span className="label">Movimento</span>
+                <div className="tchips motion-chips">
+                  <button className={`tchip ${(g.parallaxMotion || 'auto') === 'auto' ? 'on' : ''}`} onClick={() => par({ parallaxMotion: 'auto' })}><ScanEye size={14} /> Automático</button>
+                  {PAR_STYLES.map((m) => (
+                    <button key={m.id} className={`tchip ${g.parallaxMotion === m.id ? 'on' : ''}`} onClick={() => par({ parallaxMotion: m.id })}><m.icon size={14} /> {m.label}</button>
+                  ))}
+                </div>
+                <span className="small muted">Qualquer movimento respeita o limite seguro de cada imagem; o rosto dos personagens nunca é deformado.</span>
               </>
             ) : (
               <>
@@ -269,10 +277,15 @@ function MonitorPanel({ id, toastErr }: { id: string; toastErr: (m: string) => v
               </>
             )}
             <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, marginTop: 4 }}>
-              <label className="row small muted" style={{ gap: 8 }}>
-                <Toggle on={g.parallaxMouse !== false} onChange={(v) => par({ parallaxMouse: v })} label="Seguir o mouse" /> A cena também segue o mouse
-              </label>
-              <Btn className="sm ghost" onClick={() => par({ parallaxPreset: 'auto', parallaxStyle: 'orbit', parallaxStrength: 1, parallaxSpeed: 1, parallaxDolly: 1, parallaxBlur: 0.2, parallaxFocus: 0.35, parallaxMouse: true })}><RotateCcw size={13} /> Restaurar padrão</Btn>
+              <div className="row" style={{ gap: 16, flexWrap: 'wrap' }}>
+                <label className="row small muted" style={{ gap: 8 }}>
+                  <Toggle on={g.parallaxMouse !== false} onChange={(v) => par({ parallaxMouse: v })} label="Seguir o mouse" /> A cena também segue o mouse
+                </label>
+                <label className="row small muted" style={{ gap: 8 }}>
+                  <Toggle on={g.parallaxBlink !== false} onChange={(v) => par({ parallaxBlink: v })} label="Piscar os olhos" /> <Eye size={14} /> Personagens de anime piscam
+                </label>
+              </div>
+              <Btn className="sm ghost" onClick={() => par({ parallaxPreset: 'auto', parallaxMotion: 'auto', parallaxBlink: true, parallaxStyle: 'orbit', parallaxStrength: 1, parallaxSpeed: 1, parallaxDolly: 1, parallaxBlur: 0.2, parallaxFocus: 0.35, parallaxMouse: true })}><RotateCcw size={13} /> Restaurar padrão</Btn>
             </div>
             {g.reduceMotion && <span className="small muted">“Reduzir movimento” está ligado nos Ajustes, então o efeito fica parado.</span>}
           </div>
@@ -341,6 +354,8 @@ const PAR_STYLES = [
   { id: 'travel', label: 'Travelling', desc: 'Desliza de lado', icon: MoveHorizontal },
   { id: 'dolly', label: 'Aproximação', desc: 'Entra e sai', icon: ZoomIn },
   { id: 'float', label: 'Flutuar', desc: 'Oito no ar', icon: Wind },
+  { id: 'breathe', label: 'Respiração', desc: 'Aproxima e volta', icon: Activity },
+  { id: 'sway', label: 'Balanço', desc: 'Pêndulo suave', icon: Waves },
 ] as const;
 
 function Slider({ label, value, min, max, step, fmt, onChange }: { label: string; value: number; min: number; max: number; step: number; fmt: (v: number) => string; onChange: (v: number) => void }) {

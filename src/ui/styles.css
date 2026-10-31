@@ -2336,3 +2336,8 @@ input[type="range"]:active::-webkit-slider-thumb { transform: scale(1.22); box-s
 .folder-tab.on { background: linear-gradient(135deg, #ff9a3d2e, #ff6f6114); box-shadow: inset 0 0 0 1px #ffb54766; }
 .tile { transition: box-shadow 0.25s; }
 .tile:hover { box-shadow: 0 18px 40px -18px #000, 0 0 0 1px #ffb54740; }
+
+.motion-chips { max-height: none; padding: 8px; }
+.motion-chips .tchip { padding: 0 11px; gap: 6px; }
+.motion-chips .tchip svg { color: var(--muted); }
+.motion-chips .tchip.on svg { color: var(--mango); }

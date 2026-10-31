@@ -22,6 +22,8 @@ function defaultGlobal() {
     parallaxStrength: 1, // 0.1–3: how far the layers travel
     parallaxSpeed: 1, // 0.1–4: camera loop speed (1× = 12 s per loop)
     parallaxPreset: 'auto', // auto (each picture analysed) | anime | landscape | real | custom
+    parallaxMotion: 'auto', // camera path in the presets: auto | orbit | walk | travel | dolly | float | breathe | sway
+    parallaxBlink: true, // anime characters blink now and then
     parallaxStyle: 'orbit', // orbit | walk | travel | dolly | float (custom only)
     parallaxDolly: 1, // 0–3: push-in depth of the camera path
     parallaxFocus: 0.35, // 0 = background still … 1 = nearest layer still

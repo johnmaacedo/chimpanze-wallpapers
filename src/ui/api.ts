@@ -22,7 +22,7 @@ export interface GlobalCfg {
   transitionsOff: string[];
   /** 2.5D depth parallax on every wallpaper (one switch for all monitors). */
   parallax?: boolean; parallaxStrength?: number; parallaxMouse?: boolean;
-  parallaxPreset?: 'auto' | 'anime' | 'landscape' | 'real' | 'custom'; parallaxSpeed?: number; parallaxStyle?: 'orbit' | 'walk' | 'travel' | 'dolly' | 'float'; parallaxDolly?: number; parallaxFocus?: number; parallaxBlur?: number;
+  parallaxPreset?: 'auto' | 'anime' | 'landscape' | 'real' | 'custom'; parallaxMotion?: string; parallaxBlink?: boolean; parallaxSpeed?: number; parallaxStyle?: 'orbit' | 'walk' | 'travel' | 'dolly' | 'float' | 'breathe' | 'sway'; parallaxDolly?: number; parallaxFocus?: number; parallaxBlur?: number;
   chatgpt: { autoType?: boolean; autoSend?: boolean; newChat?: boolean };
   upscale: { mode: string; animeModel: string; photoModel: string; artModel: string; target: string; format: string; gpu: string; skipIfLarger: boolean };
   editPresets: { name: string; adj: any }[];

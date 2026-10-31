@@ -100,8 +100,96 @@ async function segment(sharp, imageFile, ow, oh) {
   return m;
 }
 
+// Anime face / eye detectors (deepghs, YOLOv8 ONNX; faces MIT, eyes OpenRAIL).
+const yoloSessions = {};
+function yoloPath(name) {
+  const env = { face: 'CW_FACE_MODEL', eye: 'CW_EYE_MODEL' }[name];
+  if (process.env[env]) return process.env[env];
+  const file = { face: 'anime-face-v1.4n.onnx', eye: 'anime-eye-v1.0n.onnx' }[name];
+  const { app } = require('electron');
+  return app.isPackaged ? path.join(process.resourcesPath, 'models', file) : path.join(__dirname, '..', '..', 'resources', 'models', file);
+}
+async function getYolo(name) {
+  if (yoloSessions[name] !== undefined) return yoloSessions[name];
+  yoloSessions[name] = null;
+  if (!fs.existsSync(yoloPath(name))) return null;
+  ort = ort || require('onnxruntime-node');
+  const providers = process.platform === 'win32' && !process.env.CW_DEPTH_CPU ? [['dml', 'cpu'], ['cpu']] : [['cpu']];
+  for (const ep of providers) {
+    try {
+      yoloSessions[name] = await ort.InferenceSession.create(yoloPath(name), { executionProviders: ep, logSeverityLevel: 3 });
+      return yoloSessions[name];
+    } catch (err) { log.warn('depth: detector', name, 'provider falhou', ep[0], err.message); }
+  }
+  return null;
+}
+
+/** YOLOv8 detection on an RGB buffer (w×h): boxes in pixels, after NMS. */
+async function yolo(sharp, sess, rgb, w, h, size, thr) {
+  const k = size / Math.max(w, h);
+  const nw = Math.max(1, Math.round(w * k)); const nh = Math.max(1, Math.round(h * k));
+  const S = size; const px = Math.floor((S - nw) / 2); const py = Math.floor((S - nh) / 2);
+  const small = await sharp(rgb, { raw: { width: w, height: h, channels: 3 } }).resize(nw, nh, { fit: 'fill' }).raw().toBuffer();
+  const x = new Float32Array(3 * S * S).fill(114 / 255);
+  for (let y = 0; y < nh; y++) {
+    for (let xx = 0; xx < nw; xx++) {
+      const si = (y * nw + xx) * 3; const di = (y + py) * S + xx + px;
+      x[di] = small[si] / 255; x[S * S + di] = small[si + 1] / 255; x[2 * S * S + di] = small[si + 2] / 255;
+    }
+  }
+  const out = await sess.run({ [sess.inputNames[0]]: new ort.Tensor('float32', x, [1, 3, S, S]) });
+  const o = out[sess.outputNames[0]]; const [, a, b] = o.dims; const d = o.data;
+  const cf = a < b; const N = cf ? b : a; const nc = (cf ? a : b) - 4;
+  const get = (j, i) => (cf ? d[j * N + i] : d[i * (nc + 4) + j]);
+  const boxes = [];
+  for (let i = 0; i < N; i++) {
+    let sc = 0; for (let c = 0; c < nc; c++) sc = Math.max(sc, get(4 + c, i));
+    if (sc < thr) continue;
+    const cx = get(0, i); const cy = get(1, i); const bw = get(2, i); const bh = get(3, i);
+    boxes.push({ x0: (cx - bw / 2 - px) / k, y0: (cy - bh / 2 - py) / k, x1: (cx + bw / 2 - px) / k, y1: (cy + bh / 2 - py) / k, sc });
+  }
+  boxes.sort((p, q) => q.sc - p.sc);
+  const iou = (p, q) => {
+    const ix = Math.max(0, Math.min(p.x1, q.x1) - Math.max(p.x0, q.x0)); const iy = Math.max(0, Math.min(p.y1, q.y1) - Math.max(p.y0, q.y0));
+    const I = ix * iy; return I / ((p.x1 - p.x0) * (p.y1 - p.y0) + (q.x1 - q.x0) * (q.y1 - q.y0) - I);
+  };
+  const keep = [];
+  for (const bx of boxes) if (keep.every((kk) => iou(kk, bx) < 0.45)) keep.push(bx);
+  return keep.map((bb) => ({ x0: Math.max(0, bb.x0), y0: Math.max(0, bb.y0), x1: Math.min(w, bb.x1), y1: Math.min(h, bb.y1), sc: bb.sc }));
+}
+
+/** Faces on the whole picture, then the eyes inside each face (bigger crop = more precise). */
+async function detectFacesEyes(sharp, rgb, w, h) {
+  const fs_ = await getYolo('face');
+  if (!fs_) return { faces: [], eyes: [] };
+  const faces = (await yolo(sharp, fs_, rgb, w, h, 640, 0.4)).filter((b) => b.x1 - b.x0 >= 14 && b.y1 - b.y0 >= 14);
+  const eyes = [];
+  const es = await getYolo('eye');
+  if (es) {
+    for (const [fi, fb] of faces.entries()) {
+      const pad = 0.15 * (fb.x1 - fb.x0);
+      const x0 = Math.max(0, Math.round(fb.x0 - pad)); const y0 = Math.max(0, Math.round(fb.y0 - pad));
+      const x1 = Math.min(w, Math.round(fb.x1 + pad)); const y1 = Math.min(h, Math.round(fb.y1 + pad));
+      const cw = x1 - x0; const ch = y1 - y0;
+      if (cw < 24 || ch < 24) continue;
+      const crop = await sharp(rgb, { raw: { width: w, height: h, channels: 3 } }).extract({ left: x0, top: y0, width: cw, height: ch }).raw().toBuffer();
+      const found = (await yolo(sharp, es, crop, cw, ch, 320, 0.35)).slice(0, 2);
+      for (const e of found) {
+        const eb = { x0: e.x0 + x0, y0: e.y0 + y0, x1: e.x1 + x0, y1: e.y1 + y0, sc: e.sc, face: fi };
+        // Sane eyes only: inside the upper 70% of the face, not tiny, not tall slivers.
+        const ew = eb.x1 - eb.x0; const eh = eb.y1 - eb.y0;
+        const cy = (eb.y0 + eb.y1) / 2;
+        if (ew < 6 || eh < 4 || eh / ew > 2.2 || cy > fb.y0 + 0.75 * (fb.y1 - fb.y0)) continue;
+        eyes.push(eb);
+      }
+    }
+  }
+  return { faces, eyes };
+}
+
 async function release() {
   clearTimeout(idleTimer);
+  for (const k of Object.keys(yoloSessions)) { try { if (yoloSessions[k]) await yoloSessions[k].release(); } catch (_) { /* ignore */ } delete yoloSessions[k]; }
   if (segSession) { try { await segSession.release(); } catch (_) { /* ignore */ } segSession = null; }
   if (session) {
     try { await session.release(); } catch (_) { /* ignore */ }
@@ -292,6 +380,35 @@ async function estimate(imageFile, outFile) {
   } else {
     q = Float32Array.from(bgSmooth);
   }
+  // Faces never bend: each head moves as one rigid piece (one depth for the whole
+  // head, feathered into the hair and neck), and its face is always solid foreground.
+  let fe = { faces: [], eyes: [] };
+  try { fe = await detectFacesEyes(sharp, rgbO, ow, oh); } catch (err) { log.warn('depth: detecção de rosto falhou', err.message); }
+  if (useLayers && fe.faces.length) {
+    for (const fb of fe.faces) {
+      const cx = (fb.x0 + fb.x1) / 2; const cy = (fb.y0 + fb.y1) / 2 - 0.08 * (fb.y1 - fb.y0);
+      const rx = 0.5 * (fb.x1 - fb.x0) * 1.45; const ry = 0.5 * (fb.y1 - fb.y0) * 1.45;
+      const ci = Math.round((fb.y0 + fb.y1) / 2) * ow + Math.round((fb.x0 + fb.x1) / 2);
+      if (!(matte[ci] > 0.5)) continue; // a face drawn in the background (poster, painting)
+      // The head's depth: median of the face box.
+      const vals = [];
+      for (let y = Math.round(fb.y0); y < fb.y1; y += 2) for (let x = Math.round(fb.x0); x < fb.x1; x += 2) vals.push(q[y * ow + x]);
+      vals.sort((m, n) => m - n);
+      const hd = vals[vals.length >> 1];
+      const X0 = Math.max(0, Math.floor(cx - rx * 1.1)); const X1 = Math.min(ow - 1, Math.ceil(cx + rx * 1.1));
+      const Y0 = Math.max(0, Math.floor(cy - ry * 1.1)); const Y1 = Math.min(oh - 1, Math.ceil(cy + ry * 1.1));
+      for (let y = Y0; y <= Y1; y++) {
+        for (let x = X0; x <= X1; x++) {
+          const r = Math.hypot((x - cx) / rx, (y - cy) / ry);
+          const w = 1 - smooth(0.7, 1.05, r);
+          if (w <= 0) continue;
+          const i = y * ow + x;
+          q[i] = q[i] + (hd - q[i]) * w;
+          if (r < 0.55) matte[i] = Math.max(matte[i], 1 - smooth(0.4, 0.55, r));
+        }
+      }
+    }
+  }
   q = dilate(q, ow, oh, Math.max(2, Math.round(ow / 400)));
 
   // Background plate: the picture with the characters removed.
@@ -350,10 +467,103 @@ async function estimate(imageFile, outFile) {
   await sharp(plate, { raw: { width: ow, height: oh, channels: 3 } }).jpeg({ quality: 90, chromaSubsampling: '4:4:4' }).toFile(tmpPlate);
   await fs.promises.rename(tmpPlate, plateFile);
   const analysis = analyse({ rgbO, I, matte, q, bgSmooth, ow, oh, useLayers, cut, plateBy });
+  // Faces/eyes, normalised (0..1, y from the top) for the renderer.
+  const nb = (b) => ({ x0: +(b.x0 / ow).toFixed(4), y0: +(b.y0 / oh).toFixed(4), x1: +(b.x1 / ow).toFixed(4), y1: +(b.y1 / oh).toFixed(4) });
+  analysis.faces = fe.faces.map(nb);
+  // Anime eyes found by the anime eye detector on a segmented character: it is a drawing,
+  // whatever the grain says (painted lighting can look photographic).
+  if (analysis.kind === 'real' && cut === 'anime' && fe.eyes.length >= 2) analysis.kind = 'anime';
+  analysis.eyes = [];
+  // Blinking (anime only): the eyes painted over with skin by LaMa, kept as a
+  // "lids" picture; the renderer slides the upper lash line down over it.
+  const lidsFile = outFile.replace(/\.png$/i, '.lids.jpg');
+  await fs.promises.rm(lidsFile, { force: true });
+  // Blinking needs both eyes of a face: the line through them gives the head's
+  // tilt, and each eye gets a frame turned by that angle, so the lid comes down
+  // along the face (anime heads are often tilted). Faces where it would not look
+  // right are skipped: one eye only (or one hidden by hair: very different
+  // sizes), strong tilt, weak detections, or no upper lash line found.
+  const blinkEyes = [];
+  for (let fi = 0; fi < fe.faces.length; fi++) {
+    const es = fe.eyes.filter((e) => e.face === fi);
+    if (es.length !== 2) { log.info('depth: rosto', fi, 'sem piscar:', es.length, 'olho(s) encontrado(s)'); continue; }
+    es.sort((p, q) => p.x0 - q.x0);
+    const ctr = (e) => [(e.x0 + e.x1) / 2, (e.y0 + e.y1) / 2];
+    const [cp, cr] = [ctr(es[0]), ctr(es[1])];
+    const ang = Math.atan2(cr[1] - cp[1], cr[0] - cp[0]); // y down
+    const tilt = Math.abs(ang) * 180 / Math.PI;
+    const fw = fe.faces[fi].x1 - fe.faces[fi].x0;
+    const oriented = es.map((e) => orientedEye(I, ow, oh, e, ang));
+    const ratio = Math.max(oriented[0].w, oriented[1].w) / Math.min(oriented[0].w, oriented[1].w);
+    // Very big close-up eyes are skipped too: any imperfection would show.
+    // Shape: an eye drawn shut (a wink) or half hidden is much flatter than its pair.
+    const asp = oriented.map((o) => o.h / o.w);
+    const shape = Math.min(...asp) / Math.max(...asp);
+    const ok = tilt <= 35 && ratio <= 1.9 && oriented.every((o) => o.h / oh <= 0.1) && es.every((e) => e.sc >= 0.45) && Math.min(oriented[0].w, oriented[1].w) / fw >= 0.1 && oriented.every((o) => o.lash[0] <= 0.25);
+    if (ok) blinkEyes.push(...oriented.map((o) => Object.assign(o, { face: fi })));
+    else log.info('depth: rosto', fi, 'sem piscar:', `inclinação ${tilt.toFixed(1)}°`, `tamanhos ${ratio.toFixed(2)}x`, `formato ${shape.toFixed(2)}`, `confiança ${es.map((e) => e.sc.toFixed(2)).join('/')}`, `cílios ${oriented.map((o) => o.lash[0]).join('/')}`);
+  }
+  if (analysis.kind === 'anime' && blinkEyes.length) {
+    try {
+      const lama = require('./lama-core');
+      if (!lama.exists()) throw new Error('sem LaMa');
+      const lids = Buffer.from(rgbO);
+      const mask = Buffer.alloc(N2);
+      for (const e of blinkEyes) {
+        // The oriented eye frame, a little larger, painted into the mask.
+        const cs = Math.cos(e.ang); const sn = Math.sin(e.ang);
+        const hw = e.w * 0.62; const hh = e.h * 0.66;
+        const R = Math.ceil(Math.hypot(hw, hh)) + 1;
+        for (let y = Math.max(0, Math.floor(e.cy - R)); y <= Math.min(oh - 1, Math.ceil(e.cy + R)); y++) {
+          for (let x = Math.max(0, Math.floor(e.cx - R)); x <= Math.min(ow - 1, Math.ceil(e.cx + R)); x++) {
+            const dx = x - e.cx; const dy = y - e.cy;
+            const lu = dx * cs + dy * sn; const lv = -dx * sn + dy * cs;
+            if (Math.abs(lu) <= hw && Math.abs(lv) <= hh) mask[y * ow + x] = 255;
+          }
+        }
+      }
+      for (const b of lama.maskBoxes(mask, ow, oh)) await lama.fillRegion(sharp, lids, ow, oh, mask, b, null, 2.6);
+      // An eye already drawn shut (a wink in the art) barely changes when painted
+      // over with skin: such faces keep their eyes as drawn.
+      const openness = (e) => {
+        const cs = Math.cos(e.ang); const sn = Math.sin(e.ang);
+        let d = 0; let n = 0;
+        for (let k = 0; k < 24; k++) {
+          for (let j = 0; j < 24; j++) {
+            const lu = (j / 23 - 0.5) * e.w * 0.6;
+            const lv = (e.lash[1] + (k / 23) * (0.85 - e.lash[1]) - 0.5) * e.h;
+            const x = Math.round(e.cx + lu * cs - lv * sn); const y = Math.round(e.cy + lu * sn + lv * cs);
+            if (x < 0 || y < 0 || x >= ow || y >= oh) continue;
+            const i = (y * ow + x) * 3;
+            d += (Math.abs(rgbO[i] - lids[i]) + Math.abs(rgbO[i + 1] - lids[i + 1]) + Math.abs(rgbO[i + 2] - lids[i + 2])) / 765;
+            n++;
+          }
+        }
+        return n ? d / n : 0;
+      };
+      const open = new Set();
+      for (let fi = 0; fi < fe.faces.length; fi++) {
+        const es = blinkEyes.filter((e) => e.face === fi);
+        if (!es.length) continue;
+        const o = es.map(openness);
+        // Both open, and alike (a much smaller value = a wink drawn in the art or an eye under hair).
+        if (Math.min(...o) >= 0.07 && Math.min(...o) / Math.max(...o) >= 0.7) open.add(fi);
+        else log.info('depth: rosto', fi, 'sem piscar: olho já fechado no desenho', o.map((v) => v.toFixed(3)).join('/'));
+      }
+      for (let i = blinkEyes.length - 1; i >= 0; i--) if (!open.has(blinkEyes[i].face)) blinkEyes.splice(i, 1);
+      if (!blinkEyes.length) throw new Error('nenhum olho aberto');
+      await sharp(lids, { raw: { width: ow, height: oh, channels: 3 } }).jpeg({ quality: 92, chromaSubsampling: '4:4:4' }).toFile(lidsFile);
+      // Normalised by the picture height (isotropic units): centre, half sizes, angle.
+      analysis.eyes = blinkEyes.map((e) => ({
+        cx: +(e.cx / oh).toFixed(5), cy: +(e.cy / oh).toFixed(5), hw: +(e.w / 2 / oh).toFixed(5), hh: +(e.h / 2 / oh).toFixed(5),
+        ang: +e.ang.toFixed(4), lash: e.lash, face: e.face,
+      }));
+    } catch (err) { if (err.message !== 'nenhum olho aberto') log.warn('depth: pálpebras não geradas', err.message); }
+  }
   await fs.promises.writeFile(outFile.replace(/\.png$/i, '.json'), JSON.stringify(analysis));
   await fs.promises.rename(tmp, outFile); // last: its presence means all files are complete
   return {
-    analysis, width: ow, height: oh, provider: sessionProvider, plate: plateBy, cut: useLayers ? cut : 'nenhum', split: +t.toFixed(2), ms: Date.now() - t0 };
+    analysis, faces: fe.faces.length, eyes: analysis.eyes.length, width: ow, height: oh, provider: sessionProvider, plate: plateBy, cut: useLayers ? cut : 'nenhum', split: +t.toFixed(2), ms: Date.now() - t0 };
 }
 
 const plateFor = (depthFile) => depthFile.replace(/\.png$/i, '.plate.jpg');
@@ -492,6 +702,90 @@ function analyse({ rgbO, I, matte, q, bgSmooth, ow, oh, useLayers, cut, plateBy 
     dolly: kind === 'landscape' ? 1.2 : kind === 'anime' ? 0.55 : 0.4,
     blur: kind === 'landscape' ? 0 : +(0.12 + 0.25 * busy).toFixed(2),
   };
+}
+
+/**
+ * Eye frame turned by the head's tilt: size from the detector box (an axis
+ * aligned box around a turned eye is bigger than the eye), grown so the whole
+ * iris is inside (detector boxes are tight), and the upper lash band measured
+ * along the turned frame.
+ */
+function orientedEye(I, W, H, e, ang) {
+  const c = Math.abs(Math.cos(ang)); const sn = Math.abs(Math.sin(ang));
+  const BW = e.x1 - e.x0; const BH = e.y1 - e.y0;
+  const den = c * c - sn * sn;
+  let w = BW; let h = BH;
+  if (den > 0.25) { w = (BW * c - BH * sn) / den; h = (BH * c - BW * sn) / den; }
+  w = Math.max(w, BW * 0.6); h = Math.max(h, BH * 0.6);
+  w *= 1.38; h *= 1.3;
+  // Centre moved down along the face by the extra height (growth is downward).
+  const cs = Math.cos(ang); const s2 = Math.sin(ang);
+  const dv = h * 0.09;
+  const cx = (e.x0 + e.x1) / 2 - s2 * dv; const cy = (e.y0 + e.y1) / 2 + cs * dv;
+  // Darkness profile along the turned vertical axis, across the middle of the eye.
+  const rows = Math.max(6, Math.round(h));
+  const dark = [];
+  for (let k = 0; k < rows; k++) {
+    const lv = (k / (rows - 1) - 0.5) * h;
+    let sum = 0; let n = 0;
+    for (let j = 0; j <= 10; j++) {
+      const lu = (j / 10 - 0.5) * w * 0.5;
+      const x = Math.round(cx + lu * cs - lv * s2); const y = Math.round(cy + lu * s2 + lv * cs);
+      if (x < 0 || y < 0 || x >= W || y >= H) continue;
+      sum += I[y * W + x]; n++;
+    }
+    dark.push(n ? 1 - sum / n : 0);
+  }
+  return { cx, cy, w, h, ang, lash: bandFromProfile(dark) };
+}
+
+/**
+ * Upper lash band of a darkness profile, as [top, bottom] in 0..1: the first
+ * clearly dark band from the top (in anime the lash line sits above the iris;
+ * the darkest band can be the pupil, which must not be taken for the lashes).
+ */
+function bandFromProfile(dark) {
+  const H = dark.length;
+  const sm = dark.map((_, i) => (dark[Math.max(0, i - 1)] + dark[i] + dark[Math.min(H - 1, i + 1)]) / 3);
+  const top = Math.max(2, Math.floor(H * 0.6));
+  let peak = 0; for (let i = 1; i < top; i++) if (sm[i] > sm[peak]) peak = i;
+  const sorted = sm.slice().sort((a, b) => a - b); const med = sorted[sorted.length >> 1];
+  const th = (sm[peak] + med) / 2;
+  let best = peak;
+  for (let i = 0; i < peak; i++) if (sm[i] > th) { best = i; while (best + 1 < peak && sm[best + 1] > sm[best]) best++; break; }
+  let a = best; let b = best;
+  while (a > 0 && sm[a - 1] > th) a--;
+  while (b < H - 1 && sm[b + 1] > th && b - a < H * 0.32) b++;
+  const l0 = a / H; let l1 = (b + 1) / H;
+  if (l1 - l0 < 0.08) l1 = Math.min(1, l0 + 0.08);
+  return [+l0.toFixed(3), +Math.min(l1, 0.6).toFixed(3)];
+}
+
+/**
+ * Where the upper lash line sits inside an eye box (0..1 from the top): the
+ * darkest band of rows in the upper part of the eye, across its middle. This is
+ * what slides down when the eye closes.
+ */
+function lashBand(I, W, e) {
+  const x0 = Math.round(e.x0 + 0.22 * (e.x1 - e.x0)); const x1 = Math.round(e.x1 - 0.22 * (e.x1 - e.x0));
+  const y0 = Math.round(e.y0); const y1 = Math.round(e.y1); const H = Math.max(1, y1 - y0);
+  const dark = [];
+  for (let y = y0; y < y1; y++) {
+    let s = 0; let n = 0;
+    for (let x = x0; x <= x1; x++) { s += I[y * W + x]; n++; }
+    dark.push(1 - s / Math.max(1, n));
+  }
+  const sm = dark.map((_, i) => (dark[Math.max(0, i - 1)] + dark[i] + dark[Math.min(dark.length - 1, i + 1)]) / 3);
+  const top = Math.max(2, Math.floor(H * 0.6));
+  let best = 0; for (let i = 1; i < top; i++) if (sm[i] > sm[best]) best = i;
+  const sorted = sm.slice().sort((a, b) => a - b); const med = sorted[sorted.length >> 1];
+  const th = (sm[best] + med) / 2;
+  let a = best; let b = best;
+  while (a > 0 && sm[a - 1] > th) a--;
+  while (b < H - 1 && sm[b + 1] > th && b - a < H * 0.32) b++;
+  const l0 = a / H; let l1 = (b + 1) / H;
+  if (l1 - l0 < 0.08) l1 = Math.min(1, l0 + 0.08);
+  return [+l0.toFixed(3), +Math.min(l1, 0.6).toFixed(3)];
 }
 
 /** True when the near part of the depth spans the bottom of the frame (a ground plane). */

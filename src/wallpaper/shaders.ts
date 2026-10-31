@@ -39,6 +39,19 @@ uniform vec4 uToPar;
 uniform vec2 uFromPar2; // x = focus (depth that stays still), y = background blur 0..1
 uniform vec2 uToPar2;
 float parFocus = 0.35;
+// Blinking: each eye as centre + half size in picture-height units (y down) and
+// lash band + tilt angle, how closed it is (0 open .. 1 shut), and the "lids"
+// picture (eyes painted over with skin).
+uniform sampler2D uFromLids;
+uniform sampler2D uToLids;
+uniform vec4 uFromEye[6];
+uniform vec4 uToEye[6];
+uniform float uFromBlink[6];
+uniform float uToBlink[6];
+uniform vec4 uFromLash[6]; // x,y = upper lash band (0..1 from the top of the eye), z = tilt (radians)
+uniform vec4 uToLash[6];
+uniform int uFromEyes;
+uniform int uToEyes;
 
 #define PI 3.14159265359
 float p;
@@ -95,7 +108,45 @@ vec4 texAt(sampler2D tex, vec2 s, float lod, float mips) {
   return texture(tex, t);
 }
 
-vec4 sampleMedia(sampler2D tex, vec2 size, vec2 uv, float zoom, vec2 pan, float mips, float lod, sampler2D dtex, sampler2D ptex, vec4 par, vec2 par2) {
+// The upper lash line slides down over the eye (skin from the lids picture
+// above it), keeping its own curve: an anime blink, drawn in the picture's style.
+vec3 blinkAt(vec3 c, sampler2D tex, sampler2D lids, vec2 s, float lod, float mips, int which, float ar) {
+  int n = which == 0 ? uFromEyes : uToEyes;
+  for (int i = 0; i < 6; i++) {
+    if (i >= n) break;
+    vec4 e = which == 0 ? uFromEye[i] : uToEye[i];   // cx, cy, half w, half h
+    vec4 l = which == 0 ? uFromLash[i] : uToLash[i]; // lash top, lash bottom, angle
+    float k = which == 0 ? uFromBlink[i] : uToBlink[i];
+    if (k < 0.002) continue;
+    // Into the eye's own frame (turned with the head): u across, v down, 0..1.
+    vec2 p = vec2(s.x * ar, 1.0 - s.y) - e.xy;
+    float cs = cos(l.z); float sn = sin(l.z);
+    vec2 loc = vec2(p.x * cs + p.y * sn, -p.x * sn + p.y * cs);
+    float u = loc.x / (2.0 * e.z) + 0.5;
+    float v = loc.y / (2.0 * e.w) + 0.5;
+    if (u < -0.12 || u > 1.12 || v < -0.05 || v > 1.05) continue;
+    float shift = k * max(0.0, 0.9 - l.y);
+    vec3 skin = textureLod(lids, clamp(vec2(s.x, 1.0 - s.y), 0.0, 1.0), 0.0).rgb;
+    vec3 o;
+    if (v < l.x) {
+      o = c; // above the lashes (brows, bangs) never changes
+    } else if (v < l.x + shift) {
+      o = skin; // the lid uncovered as the lashes come down
+    } else if (v < l.y + shift) {
+      // The lash band, taken from where it is drawn and moved down along the face.
+      vec2 src = vec2(loc.x, loc.y - shift * 2.0 * e.w);
+      vec2 q = e.xy + vec2(src.x * cs - src.y * sn, src.x * sn + src.y * cs);
+      o = texAt(tex, vec2(q.x / ar, 1.0 - q.y), lod, mips).rgb;
+    } else {
+      o = mix(c, skin, smoothstep(0.55, 1.0, k)); // shut: no iris left under the line
+    }
+    float w = smoothstep(-0.12, 0.12, u) * smoothstep(1.12, 0.88, u) * smoothstep(1.05, 0.95, v);
+    c = mix(c, o, w);
+  }
+  return c;
+}
+
+vec4 sampleMedia(sampler2D tex, vec2 size, vec2 uv, float zoom, vec2 pan, float mips, float lod, sampler2D dtex, sampler2D ptex, vec4 par, vec2 par2, sampler2D lids, int which) {
   parFocus = par2.x;
   vec2 sc = fitScale(size);
   vec2 q = (uv - 0.5) * sc / zoom + 0.5 + pan;
@@ -115,13 +166,12 @@ vec4 sampleMedia(sampler2D tex, vec2 size, vec2 uv, float zoom, vec2 pan, float 
     // Depth of field blurs only the plate (characters removed), so no halo of
     // the character's colours bleeds into the background around it.
     if (bl > 0.01) bg = mix(bg, textureLod(ptex, pt, bl + lod).rgb, clamp(bl, 0.0, 1.0));
-    vec3 fg = texAt(tex, sf, lod, mips).rgb;
+    vec3 fg = blinkAt(texAt(tex, sf, lod, mips).rgb, tex, lids, sf, lod, mips, which, size.x / max(size.y, 1.0));
     return vec4(mix(bg, fg, a), 1.0);
   }
   if (inside || uFit == 0 || uFit == 2) {
     q = clamp(q, 0.0, 1.0);
-    if (lod > 0.01 && mips > 0.5) return textureLod(tex, vec2(q.x, 1.0 - q.y), lod);
-    return texture(tex, vec2(q.x, 1.0 - q.y));
+    return vec4(blinkAt(texAt(tex, q, lod, mips).rgb, tex, lids, q, lod, mips, which, size.x / max(size.y, 1.0)), 1.0);
   }
   // Letterbox area (contain/center): blurred, darkened cover of the same image.
   float ca = uRes.x / uRes.y; float ma = size.x / max(size.y, 1.0);
@@ -133,9 +183,9 @@ vec4 sampleMedia(sampler2D tex, vec2 size, vec2 uv, float zoom, vec2 pan, float 
 
 vec4 getFromL(vec2 uv, float lod) {
   if (uHasFrom < 0.5) return vec4(0.0, 0.0, 0.0, 1.0);
-  return sampleMedia(uFrom, uFromSize, uv, uFromZoom, uFromPan, uFromMips, lod, uFromDepth, uFromPlate, uFromPar, uFromPar2);
+  return sampleMedia(uFrom, uFromSize, uv, uFromZoom, uFromPan, uFromMips, lod, uFromDepth, uFromPlate, uFromPar, uFromPar2, uFromLids, 0);
 }
-vec4 getToL(vec2 uv, float lod) { return sampleMedia(uTo, uToSize, uv, uToZoom, uToPan, uToMips, lod, uToDepth, uToPlate, uToPar, uToPar2); }
+vec4 getToL(vec2 uv, float lod) { return sampleMedia(uTo, uToSize, uv, uToZoom, uToPan, uToMips, lod, uToDepth, uToPlate, uToPar, uToPar2, uToLids, 1); }
 vec4 getFrom(vec2 uv) { return getFromL(uv, 0.0); }
 vec4 getTo(vec2 uv) { return getToL(uv, 0.0); }
 vec2 zoomUv(vec2 uv, float z) { return (uv - 0.5) / z + 0.5; }
