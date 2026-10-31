@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { FolderOpen, ScanSearch, MonitorSmartphone, SkipBack, SkipForward, Pin, PinOff, Trash, RefreshCw, Shuffle, ListOrdered, Sparkles } from 'lucide-react';
+import { FolderOpen, ScanSearch, MonitorSmartphone, SkipBack, SkipForward, Pin, PinOff, Trash, RefreshCw, Shuffle, ListOrdered, Sparkles, Feather, LayoutGrid, Layers3, Wand2, Timer, Frame, RotateCcw, Orbit, Footprints, MoveHorizontal, ZoomIn, Wind } from 'lucide-react';
 import { api, useStore, useThumb, thumbUrl, fileName, folderName, TRANSITION_LABELS, TRANSITION_LIST, TRANSITION_CATEGORIES, EASING_LABELS, FIT_LABELS, type MonitorCfg, type MediaItem } from '../api';
 import { MonitorStage, useCountdown } from '../components/MonitorStage';
 import { Btn, Segmented, SwitchRow, Toggle } from '../components/controls';
@@ -111,6 +111,12 @@ function MonitorPanel({ id, toastErr }: { id: string; toastErr: (m: string) => v
   const easing = cfg.easing === 'inherit' ? g.easing : cfg.easing;
   const isPreset = PRESETS.some((p) => p.s === cfg.intervalSec);
 
+  const isSpecific = !['inherit', 'random', 'randomSoft'].includes(cfg.transition);
+  const [pickerOpen, setPickerOpen] = useState(isSpecific);
+  const [pickerCat, setPickerCat] = useState(() => TRANSITION_LIST.find((t) => t.id === cfg.transition)?.cat || TRANSITION_CATEGORIES[0].id);
+  const parOn = !!g.parallax && !!state!.depthModel;
+  const par = (patch: Partial<typeof g>) => setGlobal(patch).catch((e) => toastErr(e.message));
+
   return (
     <div className="monitor-grid">
       <div className="stack">
@@ -150,7 +156,103 @@ function MonitorPanel({ id, toastErr }: { id: string; toastErr: (m: string) => v
         </div>
 
         <div className="panel">
-          <h3>Troca automática</h3>
+          <h3><Wand2 size={16} className="h-ico" /> Transição <span className="sub">prévia ao vivo com o shader real</span></h3>
+          <div className="preview-box">
+            {previewPics[0]
+              ? <TransitionPreview a={previewPics[0]} b={previewPics[1]} transition={transition} duration={duration} easing={easing} fit={cfg.fit} />
+              : <div className="empty-state" style={{ height: '100%', border: 0, padding: 20 }}>Escolha uma pasta para ver a prévia.</div>}
+          </div>
+          <div className="trans-modes">
+            <button className={`mode-card ${cfg.transition === 'inherit' ? 'on' : ''}`} onClick={() => { set({ transition: 'inherit' }); setPickerOpen(false); }}>
+              <Sparkles size={15} /><b>Padrão do app</b><span>{TRANSITION_LABELS[g.defaultTransition]}</span>
+            </button>
+            <button className={`mode-card ${cfg.transition === 'random' ? 'on' : ''}`} onClick={() => { set({ transition: 'random' }); setPickerOpen(false); }}>
+              <Shuffle size={15} /><b>Aleatória</b><span>Todas as {TRANSITION_LIST.length}</span>
+            </button>
+            <button className={`mode-card ${cfg.transition === 'randomSoft' ? 'on' : ''}`} onClick={() => { set({ transition: 'randomSoft' }); setPickerOpen(false); }}>
+              <Feather size={15} /><b>Aleatória suave</b><span>Suaves e movimento</span>
+            </button>
+            <button className={`mode-card ${isSpecific ? 'on' : pickerOpen ? 'open' : ''}`} onClick={() => setPickerOpen((v) => !v)}>
+              <LayoutGrid size={15} /><b>Escolher uma</b><span>{isSpecific ? TRANSITION_LABELS[cfg.transition] : 'Abrir a lista'}</span>
+            </button>
+          </div>
+          <AnimatePresence initial={false}>
+            {pickerOpen && (
+              <motion.div className="trans-picker" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.28, ease: [0.22, 0.8, 0.25, 1] }}>
+                <div className="picker-tabs">
+                  {TRANSITION_CATEGORIES.map((c) => (
+                    <button key={c.id} className={pickerCat === c.id ? 'on' : ''} onClick={() => setPickerCat(c.id)}>
+                      {c.label} <span>{TRANSITION_LIST.filter((t) => t.cat === c.id).length}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="tchips">
+                  {TRANSITION_LIST.filter((t) => t.cat === pickerCat).map((t) => (
+                    <button key={t.id} className={`tchip ${cfg.transition === t.id ? 'on' : ''}`} onClick={() => set({ transition: t.id })}>
+                      <span className="sw" style={{ background: GLYPH_BG[t.id] || 'var(--cocoa-3)' }} />{t.label}
+                    </button>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+          <div className="row" style={{ marginTop: 14, gap: 14, flexWrap: 'wrap' }}>
+            <div className="field grow" style={{ minWidth: 180 }}>
+              <span className="label">Duração: {(duration / 1000).toFixed(1)} s</span>
+              <input type="range" min={400} max={4000} step={100} value={duration} onChange={(e) => set({ transitionMs: Number(e.target.value) })} />
+            </div>
+            <div className="field" style={{ minWidth: 170 }}>
+              <span className="label">Curva</span>
+              <select className="select" value={cfg.easing} onChange={(e) => set({ easing: e.target.value })}>
+                <option value="inherit">Padrão do app</option>
+                {Object.entries(EASING_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="stack">
+        <div className={`panel depth-panel ${parOn ? 'live' : ''}`}>
+          <div className="depth-head">
+            <div>
+              <h3 style={{ margin: 0 }}><Layers3 size={16} className="h-ico" /> Profundidade 3D</h3>
+              <span className="muted small">
+                {state!.depthModel
+                  ? 'Separa os personagens do fundo e passeia com uma câmera em loop pela cena. Vale para todos os monitores.'
+                  : 'Falta o modelo de profundidade (resources/models). Reinstale o app para usar.'}
+              </span>
+            </div>
+            <Toggle on={parOn} onChange={(v) => state!.depthModel && par({ parallax: v })} label="Profundidade 3D" />
+          </div>
+          <div className={`depth-body ${parOn ? '' : 'off'}`}>
+            <span className="label">Movimento da câmera</span>
+            <div className="style-grid">
+              {PAR_STYLES.map((s) => (
+                <button key={s.id} className={`style-card ${(g.parallaxStyle || 'orbit') === s.id ? 'on' : ''}`} onClick={() => par({ parallaxStyle: s.id })}>
+                  <s.icon size={17} /><b>{s.label}</b><span>{s.desc}</span>
+                </button>
+              ))}
+            </div>
+            <div className="slider-grid">
+              <Slider label="Intensidade" value={g.parallaxStrength ?? 1} min={0.1} max={3} step={0.05} fmt={(v) => `${Math.round(v * 100)}%`} onChange={(v) => par({ parallaxStrength: v })} />
+              <Slider label="Velocidade" value={g.parallaxSpeed ?? 1} min={0.1} max={4} step={0.05} fmt={(v) => `${v.toFixed(2).replace(/\.?0+$/, '')}×`} onChange={(v) => par({ parallaxSpeed: v })} />
+              <Slider label="Aproximação da câmera" value={g.parallaxDolly ?? 1} min={0} max={3} step={0.05} fmt={(v) => `${Math.round(v * 100)}%`} onChange={(v) => par({ parallaxDolly: v })} />
+              <Slider label="Desfoque do fundo" value={g.parallaxBlur ?? 0.2} min={0} max={1} step={0.02} fmt={(v) => (v < 0.01 ? 'Nenhum' : `${Math.round(v * 100)}%`)} onChange={(v) => par({ parallaxBlur: v })} />
+              <Slider label="Ponto de foco" value={g.parallaxFocus ?? 0.35} min={0} max={1} step={0.01} fmt={(v) => (v < 0.2 ? 'Fundo parado' : v > 0.8 ? 'Personagem parado' : 'Meio a meio')} onChange={(v) => par({ parallaxFocus: v })} />
+            </div>
+            <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, marginTop: 4 }}>
+              <label className="row small muted" style={{ gap: 8 }}>
+                <Toggle on={g.parallaxMouse !== false} onChange={(v) => par({ parallaxMouse: v })} label="Seguir o mouse" /> A cena também segue o mouse
+              </label>
+              <Btn className="sm ghost" onClick={() => par({ parallaxStyle: 'orbit', parallaxStrength: 1, parallaxSpeed: 1, parallaxDolly: 1, parallaxBlur: 0.2, parallaxFocus: 0.35, parallaxMouse: true })}><RotateCcw size={13} /> Restaurar padrão</Btn>
+            </div>
+            {g.reduceMotion && <span className="small muted">“Reduzir movimento” está ligado nos Ajustes, então o efeito fica parado.</span>}
+          </div>
+        </div>
+
+        <div className="panel">
+          <h3><Timer size={16} className="h-ico" /> Troca automática</h3>
           <SwitchRow title="Trocar sozinho" desc="Usa o timer abaixo, independente dos outros monitores." on={cfg.auto} onChange={(v) => set({ auto: v })} />
           <div style={{ opacity: cfg.auto ? 1 : 0.45, pointerEvents: cfg.auto ? 'auto' : 'none', transition: 'opacity .3s' }}>
             <div className="field" style={{ marginTop: 6 }}>
@@ -174,75 +276,15 @@ function MonitorPanel({ id, toastErr }: { id: string; toastErr: (m: string) => v
             </div>
           </div>
         </div>
-      </div>
-
-      <div className="stack">
-        <div className="panel">
-          <h3>Transição <span className="sub">prévia ao vivo com o shader real</span></h3>
-          <div style={{ aspectRatio: '16 / 9', borderRadius: 14, overflow: 'hidden', background: '#000', border: '1px solid var(--line)', marginBottom: 14 }}>
-            {previewPics[0]
-              ? <TransitionPreview a={previewPics[0]} b={previewPics[1]} transition={transition} duration={duration} easing={easing} fit={cfg.fit} />
-              : <div className="empty-state" style={{ height: '100%', border: 0, padding: 20 }}>Escolha uma pasta para ver a prévia.</div>}
-          </div>
-          <div className="trans-grid">
-            <button className={`trans-card random ${cfg.transition === 'inherit' ? 'on' : ''}`} onClick={() => set({ transition: 'inherit' })}>
-              <span className="t"><Sparkles size={13} /> Padrão do app<br /><span style={{ fontWeight: 500, fontSize: 10.5 }}>{TRANSITION_LABELS[g.defaultTransition]}</span></span>
-            </button>
-            <TransCard name="random" label="Aleatória" on={cfg.transition === 'random'} onClick={() => set({ transition: 'random' })} />
-            <TransCard name="randomSoft" label="Aleatória suave" on={cfg.transition === 'randomSoft'} onClick={() => set({ transition: 'randomSoft' })} />
-          </div>
-          {TRANSITION_CATEGORIES.map((cat) => (
-            <div key={cat.id}>
-              <div className="trans-cat">{cat.label}</div>
-              <div className="trans-grid">
-                {TRANSITION_LIST.filter((t) => t.cat === cat.id).map((t) => (
-                  <TransCard key={t.id} name={t.id} label={t.label} on={cfg.transition === t.id} onClick={() => set({ transition: t.id })} />
-                ))}
-              </div>
-            </div>
-          ))}
-          <div className="row" style={{ marginTop: 16, gap: 14, flexWrap: 'wrap' }}>
-            <div className="field grow" style={{ minWidth: 180 }}>
-              <span className="label">Duração: {(duration / 1000).toFixed(1)} s</span>
-              <input type="range" min={400} max={4000} step={100} value={duration} onChange={(e) => set({ transitionMs: Number(e.target.value) })} />
-            </div>
-            <div className="field" style={{ minWidth: 170 }}>
-              <span className="label">Curva</span>
-              <select className="select" value={cfg.easing} onChange={(e) => set({ easing: e.target.value })}>
-                <option value="inherit">Padrão do app</option>
-                {Object.entries(EASING_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-              </select>
-            </div>
-          </div>
-        </div>
 
         <div className="panel">
-          <h3>Enquadramento</h3>
+          <h3><Frame size={16} className="h-ico" /> Enquadramento</h3>
           <div className="field">
             <select className="select" value={cfg.fit} onChange={(e) => set({ fit: e.target.value as any })}>
               {Object.entries(FIT_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
             </select>
           </div>
           <SwitchRow title="Movimento sutil (Ken Burns)" desc="Zoom e deslize bem lentos enquanto a imagem fica parada." on={cfg.kenBurns} onChange={(v) => set({ kenBurns: v })} />
-          <SwitchRow
-            title="Profundidade 3D (parallax)"
-            desc={state!.depthModel
-              ? 'Separa o personagem do fundo e move cada camada numa velocidade, como os wallpapers do iPhone. Vale para todos os monitores.'
-              : 'Falta o modelo de profundidade (resources/models). Reinstale o app para usar.'}
-            on={!!g.parallax && !!state!.depthModel}
-            onChange={(v) => state!.depthModel && setGlobal({ parallax: v }).catch((e) => toastErr(e.message))} />
-          {!!g.parallax && !!state!.depthModel && (
-            <div className="parallax-opts">
-              <div className="field grow">
-                <span className="label">Intensidade da profundidade: {Math.round((g.parallaxStrength ?? 1) * 100)}%</span>
-                <input type="range" min={0.3} max={2} step={0.05} value={g.parallaxStrength ?? 1} onChange={(e) => setGlobal({ parallaxStrength: Number(e.target.value) })} />
-              </div>
-              <label className="row small muted" style={{ gap: 8 }}>
-                <Toggle on={g.parallaxMouse !== false} onChange={(v) => setGlobal({ parallaxMouse: v })} label="Seguir o mouse" /> Seguir o mouse
-              </label>
-              {g.reduceMotion && <span className="small muted">“Reduzir movimento” está ligado nos Ajustes, então o efeito fica parado.</span>}
-            </div>
-          )}
           <div className="field" style={{ marginTop: 6 }}>
             <span className="label">Apelido do monitor</span>
             <input className="input" placeholder={mon.name} defaultValue={cfg.alias} onBlur={(e) => set({ alias: e.target.value.trim() })} />
@@ -258,15 +300,25 @@ function MonitorPanel({ id, toastErr }: { id: string; toastErr: (m: string) => v
   );
 }
 
-function TransCard({ name, label, on, onClick }: { name: string; label: string; on: boolean; onClick: () => void }) {
-  if (name === 'random' || name === 'randomSoft') {
-    return <button className={`trans-card ${on ? 'on' : ''}`} onClick={onClick} style={{ background: 'linear-gradient(135deg, #3a2a20, #24170f)' }}><span className="t"><Shuffle size={12} /> {label}</span></button>;
-  }
+const PAR_STYLES = [
+  { id: 'orbit', label: 'Órbita', desc: 'Gira em volta', icon: Orbit },
+  { id: 'walk', label: 'Caminhada', desc: 'Anda pela cena', icon: Footprints },
+  { id: 'travel', label: 'Travelling', desc: 'Desliza de lado', icon: MoveHorizontal },
+  { id: 'dolly', label: 'Aproximação', desc: 'Entra e sai', icon: ZoomIn },
+  { id: 'float', label: 'Flutuar', desc: 'Oito no ar', icon: Wind },
+] as const;
+
+function Slider({ label, value, min, max, step, fmt, onChange }: { label: string; value: number; min: number; max: number; step: number; fmt: (v: number) => string; onChange: (v: number) => void }) {
+  // Local value while dragging, so the label follows the thumb instantly.
+  const [v, setV] = useState(value);
+  useEffect(() => setV(value), [value]);
+  const pct = ((v - min) / (max - min)) * 100;
   return (
-    <motion.button className={`trans-card ${on ? 'on' : ''}`} onClick={onClick} whileHover={{ y: -2 }} whileTap={{ scale: 0.96 }}
-      style={{ background: GLYPH_BG[name] || 'var(--cocoa-0)' }}>
-      <span className="t">{label}</span>
-    </motion.button>
+    <div className="field slider">
+      <span className="label">{label} <b>{fmt(v)}</b></span>
+      <input type="range" min={min} max={max} step={step} value={v} style={{ ['--p' as any]: `${pct}%` }}
+        onChange={(e) => { const n = Number(e.target.value); setV(n); onChange(n); }} />
+    </div>
   );
 }
 

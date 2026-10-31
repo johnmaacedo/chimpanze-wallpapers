@@ -18,8 +18,13 @@ function defaultGlobal() {
     transitionMs: 1600,
     transitionIntensity: 1,
     transitionsOff: ['slices'],
-    parallax: false, // 2.5D depth parallax on every wallpaper
-    parallaxStrength: 1,
+    parallax: true, // 2.5D depth parallax on every wallpaper
+    parallaxStrength: 1, // 0.1–3: how far the layers travel
+    parallaxSpeed: 1, // 0.1–4: camera loop speed (1× = 12 s per loop)
+    parallaxStyle: 'orbit', // orbit | walk | travel | dolly | float
+    parallaxDolly: 1, // 0–3: push-in depth of the camera path
+    parallaxFocus: 0.35, // 0 = background still … 1 = nearest layer still
+    parallaxBlur: 0.2, // 0–1: background blur (depth of field)
     parallaxMouse: true,
     chatgpt: { autoType: true, autoSend: true, newChat: true },
     easing: 'easeInOutCubic',
@@ -86,6 +91,12 @@ class ConfigStore {
     data.global = deepMerge(defaultGlobal(), data.global || {});
     // Settings of removed features (video AI) are dropped.
     for (const k of ['animatedFolder', 'comfy', 'ollama']) delete data.global[k];
+    // 1.5.1: the parallax becomes a default feature (switched on once for everyone).
+    if (!data.global.parallaxV151) {
+      data.global.parallax = true;
+      if (!(Number(data.global.parallaxStrength) > 1)) data.global.parallaxStrength = 1;
+      data.global.parallaxV151 = true;
+    }
     data.monitors = data.monitors || {};
     for (const id of Object.keys(data.monitors)) {
       data.monitors[id] = Object.assign(defaultMonitor(id), data.monitors[id]);

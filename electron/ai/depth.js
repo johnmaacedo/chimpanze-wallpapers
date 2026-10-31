@@ -9,8 +9,8 @@ const { app, utilityProcess } = require('electron');
 const log = require('../log');
 
 const IDLE_MS = 30000;
-const VERSION = 1; // bump when the depth recipe changes (old maps are rebuilt)
-const MAX_CACHE = 600;
+const VERSION = 2; // bump when the depth recipe changes (old maps are rebuilt)
+const MAX_CACHE = 1200; // files (each picture = depth PNG + background plate JPEG)
 let child = null;
 let idleTimer = null;
 let seq = 0;
@@ -18,6 +18,11 @@ const pending = new Map();
 const inflight = new Map(); // out file -> promise
 let queue = Promise.resolve();
 let writes = 0;
+
+function lamaPath() {
+  return app.isPackaged ? path.join(process.resourcesPath, 'models', 'lama.onnx') : path.join(__dirname, '..', '..', 'resources', 'models', 'lama.onnx');
+}
+const plateFor = (depthFile) => depthFile.replace(/\.png$/i, '.plate.jpg');
 
 function modelPath() {
   return app.isPackaged ? path.join(process.resourcesPath, 'models', 'depth-anything-v2-small.onnx') : path.join(__dirname, '..', '..', 'resources', 'models', 'depth-anything-v2-small.onnx');
@@ -36,7 +41,7 @@ function start() {
   child = utilityProcess.fork(path.join(__dirname, 'depth-worker.js'), [], {
     serviceName: 'Chimpanze Wallpapers Profundidade',
     stdio: 'pipe',
-    env: Object.assign({}, process.env, { CW_DEPTH_MODEL: modelPath() }),
+    env: Object.assign({}, process.env, { CW_DEPTH_MODEL: modelPath(), CW_LAMA_MODEL: lamaPath() }),
   });
   const c = child;
   const fwd = (buf) => String(buf).split(/\r?\n/).filter(Boolean).forEach((l) => log.info('depth:', l.replace(/^\[[^\]]+\]\s*\w+\s*/, '')));
@@ -87,6 +92,7 @@ function prune() {
     const all = [];
     for (const d of fs.readdirSync(cacheDir())) {
       const dir = path.join(cacheDir(), d);
+      if (!fs.statSync(dir).isDirectory()) continue;
       for (const f of fs.readdirSync(dir)) {
         const full = path.join(dir, f);
         all.push({ full, t: fs.statSync(full).atimeMs });
@@ -98,30 +104,49 @@ function prune() {
   } catch (_) { /* nothing cached yet */ }
 }
 
-/** Cached depth map for `file` if it already exists (no work), else null. */
+const result = (out) => ({ depth: out, plate: plateFor(out) });
+const complete = (out) => fs.existsSync(out) && fs.existsSync(plateFor(out));
+
+/** Cached { depth, plate } for `file` if it already exists (no work), else null. */
 function cached(file) {
+  checkCacheVersion();
   const out = cachePath(file);
-  return out && fs.existsSync(out) ? out : null;
+  return out && complete(out) ? result(out) : null;
 }
 
-/** Depth map for an image (made once, then served from the cache). */
+/** Maps from an older recipe are useless: drop the whole cache once per version. */
+let cacheChecked = false;
+function checkCacheVersion() {
+  if (cacheChecked) return;
+  cacheChecked = true;
+  const marker = path.join(cacheDir(), `v${VERSION}`);
+  try {
+    if (fs.existsSync(marker)) return;
+    if (fs.existsSync(cacheDir())) fs.rmSync(cacheDir(), { recursive: true, force: true });
+    fs.mkdirSync(cacheDir(), { recursive: true });
+    fs.writeFileSync(marker, '');
+  } catch (err) { log.warn('depth: limpeza do cache antigo falhou', err.message); }
+}
+
+/** { depth, plate } for an image (made once, then served from the cache). */
 function get(file) {
+  checkCacheVersion();
   const out = cachePath(file);
   if (!out) return Promise.reject(new Error('Arquivo não encontrado.'));
-  if (fs.existsSync(out)) {
+  if (complete(out)) {
     const now = new Date();
-    try { fs.utimesSync(out, now, fs.statSync(out).mtime); } catch (_) { /* ignore */ }
-    return Promise.resolve(out);
+    for (const f of [out, plateFor(out)]) { try { fs.utimesSync(f, now, fs.statSync(f).mtime); } catch (_) { /* ignore */ } }
+    return Promise.resolve(result(out));
   }
   if (inflight.has(out)) return inflight.get(out);
   if (!fs.existsSync(modelPath())) return Promise.reject(new Error('Modelo de profundidade não encontrado.'));
   // One picture at a time: the GPU work is short, and this keeps VRAM low.
   const job = queue.then(async () => {
-    if (fs.existsSync(out)) return out;
+    if (complete(out)) return result(out);
     const r = await runInWorker(file, out);
-    log.info('depth: mapa pronto', path.basename(file), `${r.width}x${r.height}`, r.provider, `${r.ms} ms`);
+    log.info('depth: mapa pronto', path.basename(file), `${r.width}x${r.height}`, r.provider, `fundo ${r.plate}`, `corte ${r.split}`, `${r.ms} ms`);
     if (++writes % 40 === 0) prune();
-    return out;
+    return result(out);
   });
   queue = job.catch(() => {});
   inflight.set(out, job);

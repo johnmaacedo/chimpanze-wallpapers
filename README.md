@@ -1,11 +1,13 @@
-# Chimpanzé Wallpapers — v1.5.0
+# Chimpanzé Wallpapers — v1.5.1
 
 Wallpapers independentes por monitor, com transições em GPU estilo motion design, profundidade 3D (parallax), upscale 4K com IA na GPU e um editor de imagem estática. Sucessor do script "WallpaperPorMonitor V5".
 
-## O que a 1.5.0 faz
+## O que a 1.5.1 faz
 - Pasta, timer e transição por monitor; detecção ao iniciar, pelo botão e ao vivo (hot-plug), com ID do monitor por EDID.
 - 75 transições WebGL2 (`src/wallpaper/shaders.ts`, catálogo em `electron/transitions.json`), com borrão de movimento automático nas que deslizam/giram, curvas de mola/Apple e compilação dos shaders em segundo plano (sem engasgo no início). Ken Burns, modo compacto/transparente.
-- **Profundidade 3D (parallax)**: Depth Anything V2 Small (ONNX, Apache-2.0) calcula a profundidade de cada imagem uma vez (GPU via DirectML, CPU de reserva) e o motor desloca as camadas com oclusão, seguindo uma deriva lenta e o mouse. Chave geral na página Monitores. Código em `electron/ai/depth*.js` e no motor (`src/wallpaper/engine.ts`).
+- **Profundidade 3D (parallax)**, ligada por padrão: Depth Anything V2 Small (ONNX, Apache-2.0) calcula a profundidade de cada imagem uma vez (GPU via DirectML, CPU de reserva). A imagem vira duas camadas: os personagens (máscara suave que segue o cabelo) e o fundo, refeito onde eles estavam (LaMa quando o personagem é pequeno, preenchimento suave quando é grande), então nada fica borrado quando a câmera anda. A câmera passeia em loop (Órbita, Caminhada, Travelling, Aproximação, Flutuar), com intensidade, velocidade, aproximação, ponto de foco, desfoque do fundo e mouse ajustáveis na página Monitores. Código em `electron/ai/depth*.js` e no motor (`src/wallpaper/engine.ts`).
+- Upscale escolhe imagens da própria galeria do app (ou do computador / pasta inteira) e sempre pede confirmação antes de começar.
+- Interface 1.5.1: visual mais moderno (camada "premium skin" no fim de `src/ui/styles.css`), página Monitores reorganizada e miniaturas dos monitores proporcionais em qualquer tamanho de janela.
 - Upscale 4K/5K/8K (Real-ESRGAN ncnn-Vulkan) com modelos de anime e foto, zoom e comparação antes/depois.
 - Editor: exposição, contraste, brancos, claridade, balanço de branco, nitidez, debanding etc.
 - Borracha de marca d'água rápida: LaMa em ONNX (`electron/ai/lama*.js`, `onnxruntime-node`).
@@ -31,4 +33,4 @@ Binários fora do Git (copie da instalação em `%LOCALAPPDATA%\Programs\Chimpan
 
 ## Arquivos do usuário
 - Configuração: `%APPDATA%\Chimpanzé Wallpapers\config.json` · Logs: `%APPDATA%\Chimpanzé Wallpapers\logs\`
-- Mapas de profundidade (cache, até 600): `%APPDATA%\Chimpanzé Wallpapers\depth\`
+- Mapas de profundidade + fundos refeitos (cache, até 1200 arquivos): `%APPDATA%\Chimpanzé Wallpapers\depth\`

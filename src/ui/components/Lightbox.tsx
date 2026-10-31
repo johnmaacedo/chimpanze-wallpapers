@@ -1,8 +1,9 @@
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import { useEffect, useState } from 'react';
 import { X, Pin, Play, Sparkles, FolderSearch, WandSparkles, ChevronLeft, ChevronRight } from 'lucide-react';
 import { api, useStore, mediaUrl, fmtBytes, type MediaItem } from '../api';
 import { Btn } from './controls';
+import { UpscaleConfirm } from './UpscalePicker';
 
 export function Lightbox({ items, index, onClose, onIndex, onEdit }: { items: MediaItem[]; index: number; onClose: () => void; onIndex: (i: number) => void; onEdit?: (path: string) => void }) {
   const { state, toast } = useStore();
@@ -10,6 +11,7 @@ export function Lightbox({ items, index, onClose, onIndex, onEdit }: { items: Me
   const [size, setSize] = useState<{ width: number; height: number } | null>(null);
   const [cut, setCut] = useState(50);
   const [compare, setCompare] = useState(false);
+  const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
     setSize(null);
@@ -32,7 +34,9 @@ export function Lightbox({ items, index, onClose, onIndex, onEdit }: { items: Me
     await api.invoke('monitor:apply', id, item.path, { fix });
     toast({ kind: 'ok', title: fix ? 'Fixado no monitor' : 'Aplicado', message: item.name });
   };
-  const upscale = async () => {
+  const upscale = () => setConfirming(true);
+  const startUpscale = async () => {
+    setConfirming(false);
     await api.invoke('upscale:start', [item.path], {});
     toast({ kind: 'info', title: 'Upscale na fila', message: 'Acompanhe o progresso no botão de tarefas, no canto inferior direito.' });
   };
@@ -91,6 +95,11 @@ export function Lightbox({ items, index, onClose, onIndex, onEdit }: { items: Me
           <Btn className="ghost sm" onClick={() => api.invoke('shell:reveal', item.path)}><FolderSearch size={14} /> Mostrar no Explorer</Btn>
         </div>
       </motion.div>
+      <div onClick={(e) => e.stopPropagation()}>
+        <AnimatePresence>
+          {confirming && <UpscaleConfirm files={[item.path]} onClose={() => setConfirming(false)} onConfirm={startUpscale} />}
+        </AnimatePresence>
+      </div>
     </motion.div>
   );
 }

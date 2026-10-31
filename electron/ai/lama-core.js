@@ -157,4 +157,4 @@ async function erase(imageFile, maskPng, outFile, onProgress) {
   return { width: W, height: H, regions: boxes.length, provider: sessionProvider };
 }
 
-module.exports = { erase, release, maskBoxes, modelPath, exists: () => fs.existsSync(modelPath()) };
+module.exports = { erase, release, maskBoxes, fillRegion, modelPath, exists: () => fs.existsSync(modelPath()) };
