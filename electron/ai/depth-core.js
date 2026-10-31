@@ -17,6 +17,10 @@ let session = null;
 let sessionProvider = '';
 let idleTimer = null;
 let ort = null;
+let segSession = null;
+const SEG_SIZE = 1024;
+/** How much of a character's own depth relief is kept (0 = flat card, 1 = raw depth). */
+const RELIEF = 0.35;
 
 function modelPath() {
   if (process.env.CW_DEPTH_MODEL) return process.env.CW_DEPTH_MODEL;
@@ -45,8 +49,60 @@ async function getSession() {
   return session;
 }
 
+function segModelPath() {
+  if (process.env.CW_SEG_MODEL) return process.env.CW_SEG_MODEL;
+  const { app } = require('electron');
+  return app.isPackaged ? path.join(process.resourcesPath, 'models', 'anime-seg-isnetis.onnx') : path.join(__dirname, '..', '..', 'resources', 'models', 'anime-seg-isnetis.onnx');
+}
+
+/** Anime character segmentation (SkyTNT anime-segmentation, ISNet, Apache-2.0). */
+async function getSegSession() {
+  if (segSession) return segSession;
+  if (!fs.existsSync(segModelPath())) return null;
+  ort = ort || require('onnxruntime-node');
+  const providers = process.platform === 'win32' && !process.env.CW_DEPTH_CPU ? [['dml', 'cpu'], ['cpu']] : [['cpu']];
+  for (const ep of providers) {
+    try {
+      segSession = await ort.InferenceSession.create(segModelPath(), { executionProviders: ep, logSeverityLevel: 3, graphOptimizationLevel: 'all' });
+      log.info('depth: recorte de anime pronto com', ep[0]);
+      return segSession;
+    } catch (err) { log.warn('depth: recorte de anime, provider falhou', ep[0], err.message); }
+  }
+  return null;
+}
+
+/**
+ * Soft mask (0..1, ow×oh) of the characters, or null without the model. The
+ * picture is fitted into 1024×1024 (padded), as the model was trained.
+ */
+async function segment(sharp, imageFile, ow, oh) {
+  const ss = await getSegSession();
+  if (!ss) return null;
+  const S = SEG_SIZE;
+  const k = S / Math.max(ow, oh);
+  const w = Math.max(1, Math.round(ow * k)); const h = Math.max(1, Math.round(oh * k));
+  const px = Math.floor((S - w) / 2); const py = Math.floor((S - h) / 2);
+  const rgb = await sharp(imageFile, { limitInputPixels: false }).rotate().removeAlpha().resize(w, h, { fit: 'fill' }).raw().toBuffer();
+  const x = new Float32Array(3 * S * S);
+  for (let y = 0; y < h; y++) {
+    for (let xx = 0; xx < w; xx++) {
+      const si = (y * w + xx) * 3; const di = (y + py) * S + xx + px;
+      x[di] = rgb[si] / 255; x[S * S + di] = rgb[si + 1] / 255; x[2 * S * S + di] = rgb[si + 2] / 255;
+    }
+  }
+  const out = await ss.run({ [ss.inputNames[0]]: new ort.Tensor('float32', x, [1, 3, S, S]) });
+  const md = out[ss.outputNames[0]].data;
+  const crop = Buffer.alloc(w * h);
+  for (let y = 0; y < h; y++) for (let xx = 0; xx < w; xx++) crop[y * w + xx] = Math.round(255 * Math.min(1, Math.max(0, md[(y + py) * S + xx + px])));
+  const up = await sharp(crop, { raw: { width: w, height: h, channels: 1 } }).resize(ow, oh, { fit: 'fill', kernel: 'cubic' }).extractChannel(0).raw().toBuffer();
+  const m = new Float32Array(ow * oh);
+  for (let i = 0; i < ow * oh; i++) m[i] = up[i] / 255;
+  return m;
+}
+
 async function release() {
   clearTimeout(idleTimer);
+  if (segSession) { try { await segSession.release(); } catch (_) { /* ignore */ } segSession = null; }
   if (session) {
     try { await session.release(); } catch (_) { /* ignore */ }
     session = null;
@@ -166,18 +222,38 @@ async function estimate(imageFile, outFile) {
 
   // --- Two layers: what is in focus (characters) and the background behind it.
   const t = otsu(qRef);
-  // Soft matte: a depth cut, then snapped to the picture's own edges so it
-  // follows hair strands and line art instead of the blurry depth outline.
-  let matte = new Float32Array(N2);
-  for (let i = 0; i < N2; i++) matte[i] = smooth(t - 0.05, t + 0.05, qRef[i]);
-  matte = guidedFilter(I, matte, ow, oh, Math.max(3, Math.round(ow / 320)), 2e-3);
-  // Firm up partial values: thin objects (a sword, fingers) must not end up half
-  // in each layer (that shows as a faint double).
-  for (let i = 0; i < N2; i++) matte[i] = smooth(0.12, 0.6, matte[i]);
-
-  // Depth the foreground layer moves with (grown a little so its outline travels with it).
-  let q = dilate(qRef, ow, oh, Math.max(2, Math.round(ow / 400)));
-  q = boxBlur(q, ow, oh, Math.max(1, Math.round(ow / 640)));
+  // 1st choice: the anime character segmentation (follows hair strands, holds
+  // groups of characters together). Fallback: a cut of the depth map, snapped
+  // to the picture's own edges.
+  let matte = null;
+  let cut = 'profundidade';
+  let seg = null;
+  try { seg = await segment(sharp, imageFile, ow, oh); } catch (err) { log.warn('depth: recorte de anime falhou', err.message); }
+  if (seg) {
+    let cover = 0;
+    for (let i = 0; i < N2; i++) if (seg[i] > 0.5) cover++;
+    if (cover > N2 * 0.005 && cover < N2 * 0.92) {
+      matte = seg;
+      for (let i = 0; i < N2; i++) matte[i] = smooth(0.04, 0.96, matte[i]);
+      cut = 'anime';
+    }
+  }
+  // No character found: a scene whose near part runs along the whole bottom
+  // (ground, hills, water) is a landscape and moves as one soft sheet. A compact
+  // near shape (e.g. realistic 3D characters the anime model doesn't know) still
+  // gets cut out by depth.
+  if (!matte && seg && looksLikeGround(qRef, t, ow, oh)) {
+    matte = new Float32Array(N2);
+    cut = 'paisagem';
+  }
+  if (!matte) {
+    matte = new Float32Array(N2);
+    for (let i = 0; i < N2; i++) matte[i] = smooth(t - 0.05, t + 0.05, qRef[i]);
+    matte = guidedFilter(I, matte, ow, oh, Math.max(3, Math.round(ow / 320)), 2e-3);
+    // Firm up partial values: thin objects (a sword, fingers) must not end up half
+    // in each layer (that shows as a faint double).
+    for (let i = 0; i < N2; i++) matte[i] = smooth(0.12, 0.6, matte[i]);
+  }
 
   // Hole = where the characters are (grown a few pixels so thin hair strands are
   // included). The background layer samples the source where a character used to
@@ -185,15 +261,38 @@ async function estimate(imageFile, outFile) {
   // keeps its real pixels and its real depth.
   const holeBin = new Float32Array(N2);
   let holeCount = 0;
-  for (let i = 0; i < N2; i++) if (matte[i] > 0.06) holeBin[i] = 1;
-  const grown = dilate(holeBin, ow, oh, Math.max(2, Math.round(ow / 400)));
+  for (let i = 0; i < N2; i++) if (matte[i] > (cut === 'anime' ? 0.02 : 0.06)) holeBin[i] = 1;
+  const grown = dilate(holeBin, ow, oh, Math.max(3, Math.round(ow / 320)));
   for (let i = 0; i < N2; i++) if (grown[i] > 0.5) holeCount++;
-  const useLayers = holeCount > N2 * 0.002 && holeCount < N2 * 0.95;
+  const useLayers = cut !== 'paisagem' && holeCount > N2 * 0.002 && holeCount < N2 * 0.95;
 
   // Background depth: the hole filled in from the surroundings (no walls left).
   const bgDepth = useLayers ? fillFromOutside(qRef, grown, ow, oh, 1) : Float32Array.from(qRef);
   if (useLayers) for (let i = 0; i < N2; i++) if (grown[i] > 0.5) bgDepth[i] = Math.min(bgDepth[i], t);
-  const bgSmooth = boxBlur(bgDepth, ow, oh, Math.max(2, Math.round(ow / 200)));
+  // A gentle background: fine depth noise would bend straight lines (windows,
+  // horizons) as the camera moves, so the background warps like a soft sheet.
+  const bgSmooth = boxBlur(boxBlur(bgDepth, ow, oh, Math.max(3, Math.round(ow / 120))), ow, oh, Math.max(3, Math.round(ow / 120)));
+
+  // Depth the foreground layer moves with. Inside a character the relief is
+  // flattened toward its average depth (hair and face at different depths would
+  // tear apart); every character stays in front of what is right behind it.
+  let q;
+  if (useLayers) {
+    const R = Math.max(8, Math.round(ow / 30));
+    const wq = new Float32Array(N2);
+    for (let i = 0; i < N2; i++) wq[i] = qRef[i] * matte[i];
+    const num = boxBlur(wq, ow, oh, R); const den = boxBlur(matte, ow, oh, R);
+    q = new Float32Array(N2);
+    for (let i = 0; i < N2; i++) {
+      const avg = den[i] > 1e-3 ? num[i] / den[i] : qRef[i];
+      const fgd = Math.max(avg + (qRef[i] - avg) * RELIEF, bgSmooth[i] + 0.08);
+      q[i] = matte[i] > 0.02 ? fgd : bgSmooth[i];
+    }
+    q = boxBlur(q, ow, oh, Math.max(2, Math.round(ow / 320)));
+  } else {
+    q = Float32Array.from(bgSmooth);
+  }
+  q = dilate(q, ow, oh, Math.max(2, Math.round(ow / 400)));
 
   // Background plate: the picture with the characters removed.
   let plate = rgbO;
@@ -250,11 +349,164 @@ async function estimate(imageFile, outFile) {
   const tmpPlate = plateFile + '.tmp.jpg';
   await sharp(plate, { raw: { width: ow, height: oh, channels: 3 } }).jpeg({ quality: 90, chromaSubsampling: '4:4:4' }).toFile(tmpPlate);
   await fs.promises.rename(tmpPlate, plateFile);
-  await fs.promises.rename(tmp, outFile); // last: its presence means both files are complete
-  return { width: ow, height: oh, provider: sessionProvider, plate: plateBy, split: +t.toFixed(2), ms: Date.now() - t0 };
+  const analysis = analyse({ rgbO, I, matte, q, bgSmooth, ow, oh, useLayers, cut, plateBy });
+  await fs.promises.writeFile(outFile.replace(/\.png$/i, '.json'), JSON.stringify(analysis));
+  await fs.promises.rename(tmp, outFile); // last: its presence means all files are complete
+  return {
+    analysis, width: ow, height: oh, provider: sessionProvider, plate: plateBy, cut: useLayers ? cut : 'nenhum', split: +t.toFixed(2), ms: Date.now() - t0 };
 }
 
 const plateFor = (depthFile) => depthFile.replace(/\.png$/i, '.plate.jpg');
+
+/**
+ * Looks at the picture to pick depth settings that will not break it:
+ * - kind: anime / real (photo-like) / landscape (no characters found);
+ * - gap: how far in front of the background the characters stand (in depth);
+ * - busy: how detailed the background right behind the characters is (a detailed
+ *   background makes the rebuilt strip behind them easier to notice);
+ * - hair: how much fine, semi-transparent outline (loose hair) there is;
+ * - cover / count: how much of the frame the characters fill, and how many.
+ * From those comes "band": the widest strip (in pixels at 1920 wide) the camera
+ * may uncover behind a character, plus a suggested camera style, focus, blur.
+ */
+function analyse({ rgbO, I, matte, q, bgSmooth, ow, oh, useLayers, cut, plateBy }) {
+  const N = ow * oh;
+  // Anime vs photo: flat areas and a short palette (same idea as the upscaler).
+  let flat = 0; let total = 0; const colors = new Set();
+  const st = Math.max(1, Math.round(ow / 320));
+  for (let y = st; y < oh - st; y += st) {
+    for (let x = st; x < ow - st; x += st) {
+      const i = (y * ow + x) * 3; const r = i + 3 * st; const d = i + 3 * st * ow;
+      let g = 0;
+      for (let k = 0; k < 3; k++) g += Math.abs(rgbO[i + k] - rgbO[r + k]) + Math.abs(rgbO[i + k] - rgbO[d + k]);
+      if (g < 9) flat++;
+      total++;
+      colors.add(((rgbO[i] >> 3) << 10) | ((rgbO[i + 1] >> 3) << 5) | (rgbO[i + 2] >> 3));
+    }
+  }
+  const flatRatio = flat / Math.max(1, total);
+  const colorRatio = colors.size / Math.max(1, total);
+  const animeScore = Math.min(1, flatRatio / 0.45) * 0.7 + (colorRatio < 0.12 ? 0.3 : colorRatio < 0.22 ? 0.15 : 0);
+
+  let cover = 0;
+  for (let i = 0; i < N; i++) if (matte[i] > 0.5) cover++;
+  cover /= N;
+  const hasChars = useLayers && cover > 0.005;
+  // Photo grain: real photos keep fine noise in their smooth areas, drawings don't.
+  const lap = [];
+  for (let y = 2; y < oh - 2; y += 2) {
+    for (let x = 2; x < ow - 2; x += 2) {
+      const i = y * ow + x;
+      const gx = Math.abs(I[i + 1] - I[i - 1]) * 255; const gy = Math.abs(I[i + ow] - I[i - ow]) * 255;
+      if (gx + gy < 6) lap.push(Math.abs(4 * I[i] - I[i + 1] - I[i - 1] - I[i + ow] - I[i - ow]) * 255);
+    }
+  }
+  lap.sort((a, b) => a - b);
+  const grain = lap.length ? lap[Math.floor(lap.length * 0.75)] : 0;
+  const kind = !hasChars ? 'landscape'
+    : cut === 'anime' ? (grain >= 5 && animeScore < 0.6 ? 'real' : 'anime')
+      : 'real';
+
+  // Characters: connected blobs on a coarse grid.
+  let count = 0;
+  if (hasChars) {
+    const G = Math.max(4, Math.round(ow / 160)); const gw = Math.ceil(ow / G); const gh = Math.ceil(oh / G);
+    const cell = new Uint8Array(gw * gh);
+    for (let y = 0; y < oh; y += 2) for (let x = 0; x < ow; x += 2) if (matte[y * ow + x] > 0.5) cell[((y / G) | 0) * gw + ((x / G) | 0)] = 1;
+    const seen = new Uint8Array(gw * gh);
+    for (let i = 0; i < cell.length; i++) {
+      if (!cell[i] || seen[i]) continue;
+      let area = 0; const stack = [i]; seen[i] = 1;
+      while (stack.length) {
+        const k = stack.pop(); area++;
+        const cx = k % gw; const cy = (k / gw) | 0;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = cx + dx; const ny = cy + dy;
+          if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) continue;
+          const n = ny * gw + nx;
+          if (cell[n] && !seen[n]) { seen[n] = 1; stack.push(n); }
+        }
+      }
+      if (area > gw * gh * 0.004) count++;
+    }
+  }
+
+  // Ring just outside the characters: background detail and the depth gap.
+  let busy = 0; let gap = 0.25; let hair = 0;
+  if (!hasChars) {
+    // Landscape: the depth range of the soft sheet sets how far it may move.
+    const v = [];
+    for (let i = 0; i < N; i += 7) v.push(bgSmooth[i]);
+    v.sort((a, b) => a - b);
+    gap = Math.max(0.08, v[Math.floor(v.length * 0.95)] - v[Math.floor(v.length * 0.05)]);
+  }
+  if (hasChars) {
+    const bin = new Float32Array(N);
+    for (let i = 0; i < N; i++) bin[i] = matte[i] > 0.5 ? 1 : 0;
+    const ring = dilate(bin, ow, oh, Math.max(6, Math.round(ow / 40)));
+    let gsum = 0; let gn = 0; const bgv = []; const fgv = [];
+    for (let y = 1; y < oh - 1; y += 2) {
+      for (let x = 1; x < ow - 1; x += 2) {
+        const i = y * ow + x;
+        if (ring[i] > 0.5 && matte[i] < 0.1) {
+          gsum += Math.abs(I[i + 1] - I[i - 1]) + Math.abs(I[i + ow] - I[i - ow]);
+          gn++;
+          bgv.push(bgSmooth[i]);
+        } else if (matte[i] > 0.9) fgv.push(q[i]);
+      }
+    }
+    busy = Math.min(1, (gsum / Math.max(1, gn)) / 0.09);
+    const med = (a) => { if (!a.length) return 0; a.sort((m, n) => m - n); return a[a.length >> 1]; };
+    gap = Math.max(0.06, med(fgv) - med(bgv));
+    let soft = 0; let solid = 0;
+    for (let i = 0; i < N; i += 2) { if (matte[i] > 0.12 && matte[i] < 0.88) soft++; else if (matte[i] >= 0.88) solid++; }
+    hair = Math.min(1, (soft / Math.max(1, solid)) / 0.1);
+  }
+
+  // Widest uncovered strip, in px at 1920 wide (what still looks clean).
+  let band;
+  if (kind === 'landscape') band = 26;
+  else {
+    band = kind === 'anime' ? 30 : 22;
+    band *= 1 - 0.45 * busy;          // detailed background: keep the strip thin
+    band *= 1 - 0.3 * hair;           // loose hair: same
+    if (cover > 0.45) band *= 0.8;    // characters filling the frame: big rebuilt area
+    if (plateBy === 'lama') band *= 1.15;
+    band = Math.max(9, band);
+  }
+  const style = kind === 'landscape' ? 'travel' : count > 2 ? 'float' : 'orbit';
+  return {
+    v: 1,
+    kind,
+    count,
+    cover: +cover.toFixed(3),
+    gap: +gap.toFixed(3),
+    busy: +busy.toFixed(2),
+    hair: +hair.toFixed(2),
+    anime: +animeScore.toFixed(2),
+    grain: +grain.toFixed(1),
+    band: Math.round(band),
+    style,
+    // Characters held almost still (faces never wobble), the scene moves around them.
+    focus: kind === 'landscape' ? 0.3 : 0.62,
+    dolly: kind === 'landscape' ? 1.2 : kind === 'anime' ? 0.55 : 0.4,
+    blur: kind === 'landscape' ? 0 : +(0.12 + 0.25 * busy).toFixed(2),
+  };
+}
+
+/** True when the near part of the depth spans the bottom of the frame (a ground plane). */
+function looksLikeGround(d, t, W, H) {
+  let bottom = 0; let n = 0;
+  for (let y = Math.floor(H * 0.88); y < H; y += 2) {
+    for (let x = 0; x < W; x += 4) { n++; if (d[y * W + x] > t) bottom++; }
+  }
+  // Width covered by near pixels across the lower third.
+  let minX = W; let maxX = 0;
+  for (let y = Math.floor(H * 0.66); y < H; y += 4) {
+    for (let x = 0; x < W; x += 4) if (d[y * W + x] > t) { if (x < minX) minX = x; if (x > maxX) maxX = x; }
+  }
+  return bottom / Math.max(1, n) > 0.6 && (maxX - minX) / W > 0.85;
+}
 
 function smooth(a, b, x) {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));

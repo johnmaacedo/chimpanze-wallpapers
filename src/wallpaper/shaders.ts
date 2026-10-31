@@ -36,8 +36,9 @@ uniform sampler2D uFromPlate; // background with the characters removed
 uniform sampler2D uToPlate;
 uniform vec4 uFromPar; // camera: xy = shift (image uv), z = dolly, w = amount 0..1
 uniform vec4 uToPar;
-uniform float uParFocus; // depth that stays still (0 = background, 1 = nearest)
-uniform float uParBlur;  // background blur (depth of field), 0..1
+uniform vec2 uFromPar2; // x = focus (depth that stays still), y = background blur 0..1
+uniform vec2 uToPar2;
+float parFocus = 0.35;
 
 #define PI 3.14159265359
 float p;
@@ -69,7 +70,7 @@ vec2 fitScale(vec2 size) {
 // depth (no walls, so nothing gets smeared) and shows the inpainted plate where
 // a character used to be; the characters are drawn on top with their matte.
 vec2 parDisp(vec2 s, float d, vec4 par) {
-  float k = (d - uParFocus) * par.w;
+  float k = (d - parFocus) * par.w;
   return par.xy * k + (s - 0.5) * par.z * k;
 }
 vec4 dsample(sampler2D dt, vec2 s) { return texture(dt, vec2(s.x, 1.0 - s.y)); }
@@ -94,7 +95,8 @@ vec4 texAt(sampler2D tex, vec2 s, float lod, float mips) {
   return texture(tex, t);
 }
 
-vec4 sampleMedia(sampler2D tex, vec2 size, vec2 uv, float zoom, vec2 pan, float mips, float lod, sampler2D dtex, sampler2D ptex, vec4 par) {
+vec4 sampleMedia(sampler2D tex, vec2 size, vec2 uv, float zoom, vec2 pan, float mips, float lod, sampler2D dtex, sampler2D ptex, vec4 par, vec2 par2) {
+  parFocus = par2.x;
   vec2 sc = fitScale(size);
   vec2 q = (uv - 0.5) * sc / zoom + 0.5 + pan;
   bool inside = q.x >= 0.0 && q.x <= 1.0 && q.y >= 0.0 && q.y <= 1.0;
@@ -106,7 +108,7 @@ vec4 sampleMedia(sampler2D tex, vec2 size, vec2 uv, float zoom, vec2 pan, float 
     float a2 = fgHit(dtex, q, s2, par);
     vec2 sf = a2 > a1 ? s2 : s1;
     float a = max(a1, a2);
-    float bl = uParBlur * par.w * 3.5;
+    float bl = par2.y * par.w * 3.5;
     vec2 pt = clamp(vec2(sb.x, 1.0 - sb.y), 0.0, 1.0);
     // Sharp background: the picture, with the plate where a character used to be.
     vec3 bg = mix(texAt(tex, sb, lod, mips).rgb, textureLod(ptex, pt, 0.0).rgb, dsample(dtex, sb).a);
@@ -131,9 +133,9 @@ vec4 sampleMedia(sampler2D tex, vec2 size, vec2 uv, float zoom, vec2 pan, float 
 
 vec4 getFromL(vec2 uv, float lod) {
   if (uHasFrom < 0.5) return vec4(0.0, 0.0, 0.0, 1.0);
-  return sampleMedia(uFrom, uFromSize, uv, uFromZoom, uFromPan, uFromMips, lod, uFromDepth, uFromPlate, uFromPar);
+  return sampleMedia(uFrom, uFromSize, uv, uFromZoom, uFromPan, uFromMips, lod, uFromDepth, uFromPlate, uFromPar, uFromPar2);
 }
-vec4 getToL(vec2 uv, float lod) { return sampleMedia(uTo, uToSize, uv, uToZoom, uToPan, uToMips, lod, uToDepth, uToPlate, uToPar); }
+vec4 getToL(vec2 uv, float lod) { return sampleMedia(uTo, uToSize, uv, uToZoom, uToPan, uToMips, lod, uToDepth, uToPlate, uToPar, uToPar2); }
 vec4 getFrom(vec2 uv) { return getFromL(uv, 0.0); }
 vec4 getTo(vec2 uv) { return getToL(uv, 0.0); }
 vec2 zoomUv(vec2 uv, float z) { return (uv - 0.5) / z + 0.5; }

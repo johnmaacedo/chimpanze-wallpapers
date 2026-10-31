@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { FolderOpen, ScanSearch, MonitorSmartphone, SkipBack, SkipForward, Pin, PinOff, Trash, RefreshCw, Shuffle, ListOrdered, Sparkles, Feather, LayoutGrid, Layers3, Wand2, Timer, Frame, RotateCcw, Orbit, Footprints, MoveHorizontal, ZoomIn, Wind } from 'lucide-react';
+import { FolderOpen, ScanSearch, MonitorSmartphone, SkipBack, SkipForward, Pin, PinOff, Trash, RefreshCw, Shuffle, ListOrdered, Sparkles, Feather, LayoutGrid, Layers3, Wand2, Timer, Frame, RotateCcw, Orbit, Footprints, MoveHorizontal, ZoomIn, Wind, ScanEye, Sparkle, Mountain, User, SlidersHorizontal } from 'lucide-react';
 import { api, useStore, useThumb, thumbUrl, fileName, folderName, TRANSITION_LABELS, TRANSITION_LIST, TRANSITION_CATEGORIES, EASING_LABELS, FIT_LABELS, type MonitorCfg, type MediaItem } from '../api';
 import { MonitorStage, useCountdown } from '../components/MonitorStage';
 import { Btn, Segmented, SwitchRow, Toggle } from '../components/controls';
@@ -115,6 +115,7 @@ function MonitorPanel({ id, toastErr }: { id: string; toastErr: (m: string) => v
   const [pickerOpen, setPickerOpen] = useState(isSpecific);
   const [pickerCat, setPickerCat] = useState(() => TRANSITION_LIST.find((t) => t.id === cfg.transition)?.cat || TRANSITION_CATEGORIES[0].id);
   const parOn = !!g.parallax && !!state!.depthModel;
+  const preset = g.parallaxPreset || 'auto';
   const par = (patch: Partial<typeof g>) => setGlobal(patch).catch((e) => toastErr(e.message));
 
   return (
@@ -226,26 +227,52 @@ function MonitorPanel({ id, toastErr }: { id: string; toastErr: (m: string) => v
             <Toggle on={parOn} onChange={(v) => state!.depthModel && par({ parallax: v })} label="Profundidade 3D" />
           </div>
           <div className={`depth-body ${parOn ? '' : 'off'}`}>
-            <span className="label">Movimento da câmera</span>
+            <span className="label">Preset</span>
             <div className="style-grid">
-              {PAR_STYLES.map((s) => (
-                <button key={s.id} className={`style-card ${(g.parallaxStyle || 'orbit') === s.id ? 'on' : ''}`} onClick={() => par({ parallaxStyle: s.id })}>
+              {PAR_PRESETS.map((s) => (
+                <button key={s.id} className={`style-card ${preset === s.id ? 'on' : ''}`} onClick={() => par({ parallaxPreset: s.id, parallaxStrength: 1, parallaxSpeed: 1 })}>
                   <s.icon size={17} /><b>{s.label}</b><span>{s.desc}</span>
                 </button>
               ))}
             </div>
-            <div className="slider-grid">
-              <Slider label="Intensidade" value={g.parallaxStrength ?? 1} min={0.1} max={3} step={0.05} fmt={(v) => `${Math.round(v * 100)}%`} onChange={(v) => par({ parallaxStrength: v })} />
-              <Slider label="Velocidade" value={g.parallaxSpeed ?? 1} min={0.1} max={4} step={0.05} fmt={(v) => `${v.toFixed(2).replace(/\.?0+$/, '')}×`} onChange={(v) => par({ parallaxSpeed: v })} />
-              <Slider label="Aproximação da câmera" value={g.parallaxDolly ?? 1} min={0} max={3} step={0.05} fmt={(v) => `${Math.round(v * 100)}%`} onChange={(v) => par({ parallaxDolly: v })} />
-              <Slider label="Desfoque do fundo" value={g.parallaxBlur ?? 0.2} min={0} max={1} step={0.02} fmt={(v) => (v < 0.01 ? 'Nenhum' : `${Math.round(v * 100)}%`)} onChange={(v) => par({ parallaxBlur: v })} />
-              <Slider label="Ponto de foco" value={g.parallaxFocus ?? 0.35} min={0} max={1} step={0.01} fmt={(v) => (v < 0.2 ? 'Fundo parado' : v > 0.8 ? 'Personagem parado' : 'Meio a meio')} onChange={(v) => par({ parallaxFocus: v })} />
-            </div>
+            {preset !== 'custom' ? (
+              <>
+                <p className="small muted" style={{ margin: 0 }}>
+                  {preset === 'auto'
+                    ? 'Cada imagem é analisada antes (anime, foto ou paisagem; quantos personagens; cabelo solto; fundo detalhado) e recebe o movimento mais forte que ela aguenta sem borrar.'
+                    : 'Usa a receita deste tipo de imagem, sempre respeitando o limite seguro medido em cada wallpaper.'}
+                </p>
+                <div className="slider-grid">
+                  <Slider label="Intensidade" value={g.parallaxStrength ?? 1} min={0.3} max={2} step={0.05} fmt={(v) => (Math.abs(v - 1) < 0.025 ? '100% (seguro)' : `${Math.round(v * 100)}%`)} onChange={(v) => par({ parallaxStrength: v })} />
+                  <Slider label="Velocidade" value={g.parallaxSpeed ?? 1} min={0.3} max={3} step={0.05} fmt={(v) => `${v.toFixed(2).replace(/\.?0+$/, '')}×`} onChange={(v) => par({ parallaxSpeed: v })} />
+                </div>
+                {(g.parallaxStrength ?? 1) > 1.05 && <span className="small muted">Acima de 100% o movimento passa do limite seguro e podem aparecer marcas atrás do cabelo.</span>}
+              </>
+            ) : (
+              <>
+                <span className="label">Movimento da câmera</span>
+                <div className="style-grid">
+                  {PAR_STYLES.map((s) => (
+                    <button key={s.id} className={`style-card ${(g.parallaxStyle || 'orbit') === s.id ? 'on' : ''}`} onClick={() => par({ parallaxStyle: s.id })}>
+                      <s.icon size={17} /><b>{s.label}</b><span>{s.desc}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="slider-grid">
+                  <Slider label="Intensidade" value={g.parallaxStrength ?? 1} min={0.1} max={3} step={0.05} fmt={(v) => `${Math.round(v * 100)}%`} onChange={(v) => par({ parallaxStrength: v })} />
+                  <Slider label="Velocidade" value={g.parallaxSpeed ?? 1} min={0.1} max={4} step={0.05} fmt={(v) => `${v.toFixed(2).replace(/\.?0+$/, '')}×`} onChange={(v) => par({ parallaxSpeed: v })} />
+                  <Slider label="Aproximação da câmera" value={g.parallaxDolly ?? 1} min={0} max={3} step={0.05} fmt={(v) => `${Math.round(v * 100)}%`} onChange={(v) => par({ parallaxDolly: v })} />
+                  <Slider label="Desfoque do fundo" value={g.parallaxBlur ?? 0.2} min={0} max={1} step={0.02} fmt={(v) => (v < 0.01 ? 'Nenhum' : `${Math.round(v * 100)}%`)} onChange={(v) => par({ parallaxBlur: v })} />
+                  <Slider label="Ponto de foco" value={g.parallaxFocus ?? 0.35} min={0} max={1} step={0.01} fmt={(v) => (v < 0.2 ? 'Fundo parado' : v > 0.8 ? 'Personagem parado' : 'Meio a meio')} onChange={(v) => par({ parallaxFocus: v })} />
+                </div>
+                <span className="small muted">No modo Manual não há limite automático: força alta pode borrar o cabelo.</span>
+              </>
+            )}
             <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, marginTop: 4 }}>
               <label className="row small muted" style={{ gap: 8 }}>
                 <Toggle on={g.parallaxMouse !== false} onChange={(v) => par({ parallaxMouse: v })} label="Seguir o mouse" /> A cena também segue o mouse
               </label>
-              <Btn className="sm ghost" onClick={() => par({ parallaxStyle: 'orbit', parallaxStrength: 1, parallaxSpeed: 1, parallaxDolly: 1, parallaxBlur: 0.2, parallaxFocus: 0.35, parallaxMouse: true })}><RotateCcw size={13} /> Restaurar padrão</Btn>
+              <Btn className="sm ghost" onClick={() => par({ parallaxPreset: 'auto', parallaxStyle: 'orbit', parallaxStrength: 1, parallaxSpeed: 1, parallaxDolly: 1, parallaxBlur: 0.2, parallaxFocus: 0.35, parallaxMouse: true })}><RotateCcw size={13} /> Restaurar padrão</Btn>
             </div>
             {g.reduceMotion && <span className="small muted">“Reduzir movimento” está ligado nos Ajustes, então o efeito fica parado.</span>}
           </div>
@@ -299,6 +326,14 @@ function MonitorPanel({ id, toastErr }: { id: string; toastErr: (m: string) => v
     </div>
   );
 }
+
+const PAR_PRESETS = [
+  { id: 'auto', label: 'Automático', desc: 'Analisa cada imagem', icon: ScanEye },
+  { id: 'anime', label: 'Anime', desc: 'Personagens', icon: Sparkle },
+  { id: 'landscape', label: 'Paisagem', desc: 'Cenários', icon: Mountain },
+  { id: 'real', label: 'Pessoas reais', desc: 'Fotos', icon: User },
+  { id: 'custom', label: 'Manual', desc: 'Tudo ajustável', icon: SlidersHorizontal },
+] as const;
 
 const PAR_STYLES = [
   { id: 'orbit', label: 'Órbita', desc: 'Gira em volta', icon: Orbit },

@@ -21,7 +21,8 @@ function defaultGlobal() {
     parallax: true, // 2.5D depth parallax on every wallpaper
     parallaxStrength: 1, // 0.1–3: how far the layers travel
     parallaxSpeed: 1, // 0.1–4: camera loop speed (1× = 12 s per loop)
-    parallaxStyle: 'orbit', // orbit | walk | travel | dolly | float
+    parallaxPreset: 'auto', // auto (each picture analysed) | anime | landscape | real | custom
+    parallaxStyle: 'orbit', // orbit | walk | travel | dolly | float (custom only)
     parallaxDolly: 1, // 0–3: push-in depth of the camera path
     parallaxFocus: 0.35, // 0 = background still … 1 = nearest layer still
     parallaxBlur: 0.2, // 0–1: background blur (depth of field)
@@ -96,6 +97,13 @@ class ConfigStore {
       data.global.parallax = true;
       if (!(Number(data.global.parallaxStrength) > 1)) data.global.parallaxStrength = 1;
       data.global.parallaxV151 = true;
+    }
+    // 1.5.2: presets with per-picture analysis; the sliders become multipliers of the safe limit.
+    if (!data.global.parallaxV152) {
+      data.global.parallaxPreset = 'auto';
+      data.global.parallaxStrength = 1;
+      data.global.parallaxSpeed = 1;
+      data.global.parallaxV152 = true;
     }
     data.monitors = data.monitors || {};
     for (const id of Object.keys(data.monitors)) {
