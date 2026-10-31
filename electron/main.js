@@ -42,7 +42,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 }
 
-let config; let monitors; let hosts; let scheduler; let jobs; let platform; let library; let upscaler; let tools; let lama; let chatgpt;
+let config; let shortcuts; let monitors; let hosts; let scheduler; let jobs; let platform; let library; let upscaler; let tools; let lama; let chatgpt;
 let mainWin = null;
 let tray = null;
 let quitting = false;
@@ -113,9 +113,9 @@ async function boot() {
   startOcclusionWatch();
   updatePointerTimer();
 
-  try {
-    globalShortcut.register('CommandOrControl+Alt+W', () => (mainWin && mainWin.isVisible() && mainWin.isFocused() ? hideMain() : showMain()));
-  } catch (_) { /* ignore */ }
+  const { Shortcuts } = require('./shortcuts');
+  shortcuts = new Shortcuts({ config, run: runShortcut });
+  shortcuts.apply();
 
   if (SMOKE) {
     setTimeout(() => {
@@ -417,7 +417,7 @@ function updateTrayMenu() {
     ...(nextItems.length > 1 ? [{ label: 'Próximo em…', submenu: nextItems }] : []),
     {
       label: scheduler && scheduler.globalPaused ? 'Retomar trocas automáticas' : 'Pausar trocas automáticas',
-      click: () => { scheduler.setGlobalPaused(!scheduler.globalPaused); updateTrayMenu(); },
+      click: () => setPaused(!scheduler.globalPaused),
     },
     { label: 'Identificar monitores', click: () => identifyMonitors() },
     { type: 'separator' },
@@ -436,7 +436,7 @@ app.on('before-quit', () => {
   try { if (scheduler) scheduler.syncAllForExit(); } catch (err) { log.error('sync exit', err); }
   try { if (config) config.saveNow(); } catch (_) { /* ignore */ }
   try { if (hosts) hosts.destroyAll(); } catch (_) { /* ignore */ }
-  try { globalShortcut.unregisterAll(); } catch (_) { /* ignore */ }
+  try { if (shortcuts) shortcuts.dispose(); else globalShortcut.unregisterAll(); } catch (_) { /* ignore */ }
 });
 
 app.on('window-all-closed', (e) => {
@@ -472,6 +472,149 @@ function publicState() {
 function safe(fn, fallback) { try { return fn(); } catch (_) { return fallback; } }
 
 // ---------------------------------------------------------------------------
+// Settings changes (from the UI and from the global shortcuts)
+
+function setGlobal(patch) {
+  const g = config.updateGlobal(patch);
+  if (patch && 'startWithWindows' in patch) applyStartup();
+  if (patch && 'uiOpacity' in patch && mainWin) mainWin.setOpacity(Math.max(0.25, Math.min(1, g.uiOpacity)));
+  for (const m of monitors.monitors) {
+    const host = hosts.get(m.id);
+    if (host) host.setSettings(scheduler.rendererSettings(config.monitor(m.id)));
+  }
+  if (patch && ('parallax' in patch || 'parallaxBlink' in patch || 'reduceMotion' in patch)) scheduler.refreshDepth();
+  if (patch && 'shortcuts' in patch && shortcuts) broadcast('shortcuts', shortcuts.apply());
+  updatePointerTimer();
+  broadcast('state', publicState());
+  return g;
+}
+
+function setMonitor(id, patch) {
+  const prev = Object.assign({}, config.monitor(id));
+  const m = config.updateMonitor(id, patch);
+  const host = hosts.get(id);
+  if (host) host.setSettings(scheduler.rendererSettings(m));
+  const contentChanged = patch && ('folder' in patch || 'fixed' in patch || 'enabled' in patch || 'includeSubfolders' in patch);
+  if (contentChanged) {
+    const wasActive = hosts.get(id);
+    syncHosts();
+    if (wasActive && hasContent(id) && ('folder' in patch || 'includeSubfolders' in patch) && patch.folder !== prev.folder) {
+      scheduler.st(id).bag = [];
+      scheduler.next(id).catch(() => {});
+    }
+  }
+  if (patch && ('intervalSec' in patch || 'auto' in patch || 'fixed' in patch)) scheduler.reschedule(id);
+  scheduler.emitState();
+  broadcast('state', publicState());
+  updateTrayMenu();
+  return m;
+}
+
+function setPaused(p) {
+  scheduler.setGlobalPaused(p);
+  updateTrayMenu();
+  broadcast('state', publicState());
+  return scheduler.globalPaused;
+}
+
+// ---------------------------------------------------------------------------
+// Global shortcuts: they act on the monitor under the mouse (+Alt: every monitor)
+
+/** Short on-screen confirmation: an in-app toast when the window is in front, else a Windows notification. */
+let lastNote = null;
+function feedback(title, message, kind = 'info') {
+  if (mainWin && !mainWin.isDestroyed() && mainWin.isVisible() && mainWin.isFocused()) {
+    broadcast('toast', { kind, title, message });
+    return;
+  }
+  const sc = config.global.shortcuts || {};
+  if (sc.notify === false) return;
+  try {
+    if (!Notification.isSupported()) return;
+    if (lastNote) { try { lastNote.close(); } catch (_) { /* ignore */ } }
+    const n = new Notification({ title, body: message || '', icon: resource('icon.png'), silent: true });
+    n.on('click', () => showMain());
+    n.show();
+    lastNote = n;
+  } catch (_) { /* ignore */ }
+}
+
+function cursorMonitor() {
+  const online = monitors.monitors;
+  if (!online.length) return null;
+  const pt = screen.getCursorScreenPoint();
+  const d = screen.getDisplayNearestPoint(pt);
+  return online.find((m) => m.displayId === d.id)
+    || online.find((m) => m.rect && pt.x >= m.rect.x && pt.y >= m.rect.y && pt.x < m.rect.x + m.rect.width && pt.y < m.rect.y + m.rect.height)
+    || online.find((m) => m.primary) || online[0];
+}
+
+async function runShortcut(id, { all }) {
+  const label = (m) => `${m.index}. ${monitorName(m.id)}`;
+  const targets = () => {
+    if (all) return monitors.monitors.filter((m) => hasContent(m.id));
+    const m = cursorMonitor();
+    return m ? [m] : [];
+  };
+  switch (id) {
+    case 'window':
+      if (mainWin && mainWin.isVisible() && mainWin.isFocused()) hideMain(); else showMain();
+      return;
+    case 'pause': {
+      const p = setPaused(!scheduler.globalPaused);
+      feedback(p ? 'Trocas pausadas' : 'Trocas retomadas', p ? 'Os wallpapers ficam parados até você retomar.' : 'Os wallpapers voltam a trocar sozinhos.', p ? 'warn' : 'ok');
+      return;
+    }
+    case 'parallax': {
+      if (!require('./ai/depth').exists()) { feedback('Profundidade 3D indisponível', 'O modelo de profundidade não está instalado.', 'warn'); return; }
+      const on = !config.global.parallax;
+      setGlobal({ parallax: on });
+      feedback(on ? 'Profundidade 3D ligada' : 'Profundidade 3D desligada', on ? 'Os wallpapers ganham movimento em camadas.' : 'Os wallpapers ficam parados (sem parallax).', on ? 'ok' : 'info');
+      return;
+    }
+    case 'blink': {
+      const on = config.global.parallaxBlink === false;
+      setGlobal({ parallaxBlink: on });
+      feedback(on ? 'Piscar dos olhos ligado' : 'Piscar dos olhos desligado', on ? 'Personagens de anime piscam de vez em quando.' : 'Os olhos ficam abertos.', on ? 'ok' : 'info');
+      return;
+    }
+    case 'next':
+    case 'prev': {
+      const list = targets();
+      if (!list.length) { feedback('Nenhum monitor com wallpaper', 'Escolha uma pasta na página Monitores.', 'warn'); return; }
+      for (const m of list) {
+        const c = config.monitor(m.id);
+        if (!c.enabled || !c.folder) {
+          if (!all) feedback(label(m), c.fixed ? 'Este monitor tem um wallpaper fixo e nenhuma pasta para trocar.' : 'Este monitor não tem pasta de wallpapers.', 'warn');
+          continue;
+        }
+        // "Next" on a pinned monitor means you want something else: unpin it first.
+        if (c.fixed) { setMonitor(m.id, { fixed: '' }); if (!all) feedback(label(m), 'Wallpaper solto: voltou a trocar sozinho.', 'info'); }
+        const job = id === 'next' ? scheduler.next(m.id) : scheduler.prev(m.id);
+        job.then((item) => { if (id === 'prev' && !item && !all) feedback(label(m), 'Não há wallpaper anterior.', 'info'); })
+          .catch((err) => feedback(label(m), err.message, 'error'));
+      }
+      return;
+    }
+    case 'pin': {
+      const list = targets().filter((m) => hasContent(m.id));
+      if (!list.length) { feedback('Nada para fixar', 'Este monitor não está mostrando um wallpaper do app.', 'warn'); return; }
+      // With Alt: if any monitor is loose, pin them all; otherwise unpin them all.
+      const pin = list.some((m) => !config.monitor(m.id).fixed);
+      for (const m of list) {
+        const c = config.monitor(m.id);
+        if (pin && !c.fixed && c.current) setMonitor(m.id, { fixed: c.current });
+        else if (!pin && c.fixed) setMonitor(m.id, { fixed: '' });
+      }
+      const who = all ? 'Todos os monitores' : label(list[0]);
+      feedback(pin ? 'Wallpaper fixado' : 'Wallpaper solto', pin ? `${who}: fica neste wallpaper até você soltar.` : `${who}: volta a trocar sozinho.`, 'ok');
+      return;
+    }
+    default:
+  }
+}
+
+// ---------------------------------------------------------------------------
 // IPC
 
 function registerIpc() {
@@ -479,40 +622,11 @@ function registerIpc() {
 
   h('state', () => publicState());
 
-  h('config:global', (patch) => {
-    const g = config.updateGlobal(patch);
-    if (patch && 'startWithWindows' in patch) applyStartup();
-    if (patch && 'uiOpacity' in patch && mainWin) mainWin.setOpacity(Math.max(0.25, Math.min(1, g.uiOpacity)));
-    for (const m of monitors.monitors) {
-      const host = hosts.get(m.id);
-      if (host) host.setSettings(scheduler.rendererSettings(config.monitor(m.id)));
-    }
-    if (patch && ('parallax' in patch || 'parallaxBlink' in patch || 'reduceMotion' in patch)) scheduler.refreshDepth();
-    updatePointerTimer();
-    broadcast('state', publicState());
-    return g;
-  });
-
-  h('config:monitor', (id, patch) => {
-    const prev = Object.assign({}, config.monitor(id));
-    const m = config.updateMonitor(id, patch);
-    const host = hosts.get(id);
-    if (host) host.setSettings(scheduler.rendererSettings(m));
-    const contentChanged = patch && ('folder' in patch || 'fixed' in patch || 'enabled' in patch || 'includeSubfolders' in patch);
-    if (contentChanged) {
-      const wasActive = hosts.get(id);
-      syncHosts();
-      if (wasActive && hasContent(id) && ('folder' in patch || 'includeSubfolders' in patch) && patch.folder !== prev.folder) {
-        scheduler.st(id).bag = [];
-        scheduler.next(id).catch(() => {});
-      }
-    }
-    if (patch && ('intervalSec' in patch || 'auto' in patch || 'fixed' in patch)) scheduler.reschedule(id);
-    scheduler.emitState();
-    broadcast('state', publicState());
-    updateTrayMenu();
-    return m;
-  });
+  h('config:global', (patch) => setGlobal(patch));
+  h('config:monitor', (id, patch) => setMonitor(id, patch));
+  // A shortcut that failed may be free now (the other program closed): try again.
+  h('shortcuts:status', () => (shortcuts.hasFailures() ? shortcuts.apply() : shortcuts.status()));
+  h('shortcuts:suspend', (on) => shortcuts.suspend(on));
 
   h('monitor:forget', (id) => { config.forgetMonitor(id); broadcast('state', publicState()); return true; });
   h('monitor:next', async (id) => { await scheduler.next(id); return true; });
@@ -526,7 +640,7 @@ function registerIpc() {
   });
   h('monitors:rescan', () => { monitors.scan(true); return publicState(); });
   h('monitors:identify', () => { identifyMonitors(); return true; });
-  h('scheduler:pause', (p) => { scheduler.setGlobalPaused(p); updateTrayMenu(); return scheduler.globalPaused; });
+  h('scheduler:pause', (p) => setPaused(p));
 
   h('dialog:folder', async (title) => {
     const r = await dialog.showOpenDialog(mainWin, { title: title || 'Escolha uma pasta', properties: ['openDirectory'] });

@@ -29,4 +29,21 @@ Veja os wallpapers das pastas do app, aplique em qualquer monitor, compare antes
 Ajustes (exposição, contraste, cor, nitidez…), recorte, **borracha** de marca d'água por IA e **edição pelo ChatGPT** (Expandir para o formato do monitor, Remover objeto, Melhorar, Livre). Essa última exige o app do ChatGPT instalado; o Chimpanzé cola a imagem e o pedido e pega o resultado quando você baixar ou copiar a imagem.
 
 ## Ajustes
-Iniciar com o Windows, pausar em tela cheia ou atrás de janela maximizada, wallpaper oficial do Windows ao sair, transição padrão e intensidade dos efeitos, transições usadas no modo aleatório, "Reduzir movimento" e opções do ChatGPT.
+Iniciar com o Windows, pausar em tela cheia ou atrás de janela maximizada, wallpaper oficial do Windows ao sair, transição padrão e intensidade dos efeitos, transições usadas no modo aleatório, "Reduzir movimento", opções do ChatGPT e **Atalhos**.
+
+### Atalhos de teclado
+Funcionam em qualquer programa, mesmo com o app minimizado ou só na bandeja. Agem no monitor onde está o **mouse**; o mesmo atalho com **Alt** junto vale para **todos os monitores** (ex.: Ctrl+Shift+Alt+N).
+
+| Ação | Padrão |
+|---|---|
+| Próximo wallpaper (se estiver fixado, solta e troca) | Ctrl+Shift+N |
+| Wallpaper anterior | Ctrl+Shift+B |
+| Fixar / soltar o wallpaper atual | Ctrl+Shift+F |
+| Pausar / retomar as trocas automáticas | Ctrl+Shift+Espaço |
+| Profundidade 3D liga/desliga | Ctrl+Shift+D |
+| Piscar dos olhos liga/desliga | Ctrl+Shift+P |
+| Mostrar / esconder o app | Ctrl+Alt+W |
+
+Em **Ajustes > Atalhos** você liga/desliga cada um, troca a combinação (clique nas teclas e aperte a nova; Esc cancela, Backspace deixa sem atalho) e volta tudo com **Restaurar padrão**. Pausar, fixar e os liga/desliga mostram um aviso rápido do Windows (dá para desligar em "Mostrar aviso"). Se outro programa já usa uma combinação, o atalho fica marcado em vermelho com o aviso: grave outra.
+
+Observação: enquanto o app está aberto, essas combinações deixam de chegar aos outros programas (ex.: Ctrl+Shift+N do Chrome abre aba anônima). Se precisar de alguma delas em outro programa, troque ou desligue aqui.

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { FileText, ShieldOff, MessageSquare } from 'lucide-react';
 import { api, useStore, TRANSITION_LABELS, TRANSITION_LIST, TRANSITION_CATEGORIES, EASING_LABELS } from '../api';
 import { Btn, Segmented, SwitchRow } from '../components/controls';
+import { ShortcutsPanel } from '../components/ShortcutsPanel';
 
 export function SettingsPage() {
   const { state, setGlobal, toast } = useStore();
@@ -33,6 +34,8 @@ export function SettingsPage() {
               <span className="hint">Ao sair do app, o último wallpaper de cada monitor fica como fundo do Windows. "A cada troca" também atualiza a tela de bloqueio, mas pode piscar em algumas versões do Windows 11.</span>
             </div>
           </div>
+
+          <ShortcutsPanel />
 
           <div className="panel">
             <h3><MessageSquare size={15} style={{ verticalAlign: -2 }} /> ChatGPT (edição com IA)</h3>
@@ -112,7 +115,7 @@ export function SettingsPage() {
             <div className="field">
               <span className="label">Opacidade da janela: {Math.round(g.uiOpacity * 100)}%</span>
               <input type="range" min={0.3} max={1} step={0.05} value={g.uiOpacity} onChange={(e) => setGlobal({ uiOpacity: Number(e.target.value) })} />
-              <span className="hint">Deixa a janela translúcida para ver o wallpaper enquanto ajusta. Atalho global: Ctrl+Alt+W mostra ou esconde o app.</span>
+              <span className="hint">Deixa a janela translúcida para ver o wallpaper enquanto ajusta. Atalho global para mostrar ou esconder o app: veja Atalhos (padrão Ctrl+Alt+W).</span>
             </div>
             <div className="field" style={{ marginTop: 12 }}>
               <span className="label">Canto do modo compacto</span>
