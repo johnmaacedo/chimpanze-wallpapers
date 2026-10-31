@@ -41,6 +41,13 @@ const GetWindowThreadProcessId = user32.func('uint32_t __stdcall GetWindowThread
 const GetWindowTextW = user32.func('int __stdcall GetWindowTextW(void *hwnd, _Out_ uint8_t *buf, int maxCount)');
 const keybd_event = user32.func('void __stdcall keybd_event(uint8_t vk, uint8_t scan, uint32_t flags, uintptr_t extra)');
 const SetForegroundWindow = user32.func('bool __stdcall SetForegroundWindow(void *hwnd)');
+const BringWindowToTop = user32.func('bool __stdcall BringWindowToTop(void *hwnd)');
+const GetWindow = user32.func('void * __stdcall GetWindow(void *hwnd, uint32_t cmd)');
+
+const kernel32 = koffi.load('kernel32.dll');
+const OpenProcess = kernel32.func('void * __stdcall OpenProcess(uint32_t access, bool inherit, uint32_t pid)');
+const CloseHandle = kernel32.func('bool __stdcall CloseHandle(void *h)');
+const QueryFullProcessImageNameW = kernel32.func('bool __stdcall QueryFullProcessImageNameW(void *h, uint32_t flags, _Out_ uint8_t *buf, _Inout_ uint32_t *size)');
 
 const CoInitializeEx = ole32.func('int32_t __stdcall CoInitializeEx(void *reserved, uint32_t coinit)');
 const CoCreateInstance = ole32.func('int32_t __stdcall CoCreateInstance(const CW_GUID *clsid, void *outer, uint32_t ctx, const CW_GUID *iid, _Out_ void **ppv)');
@@ -359,16 +366,74 @@ function windowTitle(h) {
   return n > 0 ? buf.toString('utf16le', 0, n * 2) : '';
 }
 
-/** Title/pid of the window that currently has keyboard focus. */
+const exeCache = new Map();
+/** Full path of a process' executable ('' when it cannot be read). */
+function processPath(pid) {
+  if (!pid) return '';
+  if (exeCache.has(pid)) return exeCache.get(pid);
+  let out = '';
+  const h = OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, false, pid);
+  if (!isNull(h)) {
+    try {
+      const buf = Buffer.alloc(2048);
+      const size = [1024];
+      if (QueryFullProcessImageNameW(h, 0, buf, size)) out = buf.toString('utf16le', 0, Number(size[0]) * 2);
+    } finally { CloseHandle(h); }
+  }
+  if (exeCache.size > 200) exeCache.clear();
+  exeCache.set(pid, out);
+  return out;
+}
+
+function windowPid(h) {
+  const pidOut = [0];
+  GetWindowThreadProcessId(h, pidOut);
+  return Number(pidOut[0]);
+}
+
+/** Title/pid/exe of the window that currently has keyboard focus. */
 function foregroundWindow() {
   const fg = GetForegroundWindow();
   if (isNull(fg)) return null;
-  const pidOut = [0];
-  GetWindowThreadProcessId(fg, pidOut);
-  return { title: windowTitle(fg), cls: className(fg), pid: Number(pidOut[0]), minimized: !!IsIconic(fg) };
+  const pid = windowPid(fg);
+  return { hwnd: toBig(fg), title: windowTitle(fg), cls: className(fg), pid, exe: processPath(pid), minimized: !!IsIconic(fg) };
 }
 
-const VK = { CTRL: 0x11, SHIFT: 0x10, ALT: 0x12, ENTER: 0x0d, V: 0x56, O: 0x4f, N: 0x4e, ESC: 0x1b };
+/**
+ * Main window of an app, matched by its executable path: the visible, titled,
+ * unowned top-level window (hidden ones count only when nothing visible exists,
+ * e.g. an app sitting in the tray).
+ */
+function findAppWindow(exeRe) {
+  let visible = null; let hidden = null;
+  EnumWindows((h) => {
+    if (!isNull(GetWindow(h, 4 /* GW_OWNER */))) return true;
+    if (!windowTitle(h)) return true;
+    if (!exeRe.test(processPath(windowPid(h)))) return true;
+    if (IsWindowVisible(h)) { visible = toBig(h); return false; }
+    if (!hidden) hidden = toBig(h);
+    return true;
+  }, 0);
+  const h = visible || hidden;
+  return h ? { hwnd: h, visible: !!visible, minimized: !!IsIconic(h), title: windowTitle(h) } : null;
+}
+
+/** Restores and brings a window to the front (works around the foreground lock). */
+function focusWindow(hwnd) {
+  const h = toBig(hwnd);
+  if (!IsWindow(h)) return false;
+  ShowWindow(h, IsIconic(h) ? 9 /* SW_RESTORE */ : 5 /* SW_SHOW */);
+  BringWindowToTop(h);
+  if (SetForegroundWindow(h) && same(GetForegroundWindow(), h)) return true;
+  // Refused by the foreground lock: a synthetic Alt tap makes Windows accept it.
+  // Only as a fallback, since an Alt tap can open a menu bar.
+  keybd_event(0x12, 0, 0, 0);
+  keybd_event(0x12, 0, 2, 0);
+  SetForegroundWindow(h);
+  return same(GetForegroundWindow(), h);
+}
+
+const VK = { CTRL: 0x11, SHIFT: 0x10, ALT: 0x12, ENTER: 0x0d, V: 0x56, O: 0x4f, N: 0x4e, A: 0x41, ESC: 0x1b, DELETE: 0x2e, BACKSPACE: 0x08 };
 /** Presses a key combination, e.g. ['CTRL', 'V']. */
 function sendKeys(combo) {
   const codes = combo.map((k) => VK[k] || k.toUpperCase().charCodeAt(0));
@@ -379,6 +444,8 @@ function sendKeys(combo) {
 module.exports = {
   platform: 'win32',
   foregroundWindow,
+  findAppWindow,
+  focusWindow,
   sendKeys,
   listMonitors,
   setWindowsWallpaper,

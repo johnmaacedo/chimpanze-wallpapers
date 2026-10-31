@@ -12,6 +12,8 @@ engine.onError = (m) => window.cw.send('wp:error', m);
 window.cw.on('wp:show', (msg: ShowMsg) => { engine.show(msg); });
 window.cw.on('wp:paused', (p: boolean) => engine.setPaused(!!p));
 window.cw.on('wp:settings', (s: any) => engine.setSettings(s || {}));
+window.cw.on('wp:depth', (m: any) => { if (m && m.url && m.depthUrl) engine.setDepth(m); });
+window.cw.on('wp:pointer', (p: any) => { if (p) engine.setPointer(p); });
 
 // Compile the fallback transition, then tell main we are ready.
 setTimeout(() => {

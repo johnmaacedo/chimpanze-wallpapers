@@ -20,6 +20,8 @@ export interface GlobalCfg {
   transitionIntensity: number;
   /** Transitions left out of the random modes. */
   transitionsOff: string[];
+  /** 2.5D depth parallax on every wallpaper (one switch for all monitors). */
+  parallax?: boolean; parallaxStrength?: number; parallaxMouse?: boolean;
   chatgpt: { autoType?: boolean; autoSend?: boolean; newChat?: boolean };
   upscale: { mode: string; animeModel: string; photoModel: string; artModel: string; target: string; format: string; gpu: string; skipIfLarger: boolean };
   editPresets: { name: string; adj: any }[];
@@ -27,7 +29,7 @@ export interface GlobalCfg {
 }
 export interface SchedState { monitors: Record<string, { nextAt: number; occluded: boolean; error: string; busy: boolean; historySize: number }>; globalPaused: boolean; now: number }
 export interface AppState {
-  version: string; platform: string; raisedDesktop: boolean; monitors: Monitor[]; offline: OfflineMonitor[];
+  version: string; platform: string; raisedDesktop: boolean; depthModel?: boolean; monitors: Monitor[]; offline: OfflineMonitor[];
   config: { global: GlobalCfg; monitors: Record<string, MonitorCfg>; migratedFrom?: string };
   scheduler: SchedState; compact: boolean; tools: { upscaler: boolean; models: string[] };
   logFile: string | null; migratedFrom: string | null;

@@ -18,6 +18,9 @@ function defaultGlobal() {
     transitionMs: 1600,
     transitionIntensity: 1,
     transitionsOff: ['slices'],
+    parallax: false, // 2.5D depth parallax on every wallpaper
+    parallaxStrength: 1,
+    parallaxMouse: true,
     chatgpt: { autoType: true, autoSend: true, newChat: true },
     easing: 'easeInOutCubic',
     preferUpscaled: true,

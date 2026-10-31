@@ -68,7 +68,7 @@ function OfflinePanel({ id }: { id: string }) {
 }
 
 function MonitorPanel({ id, toastErr }: { id: string; toastErr: (m: string) => void }) {
-  const { state, setMonitor, mediaVersion } = useStore();
+  const { state, setMonitor, setGlobal, mediaVersion } = useStore();
   const mon = state!.monitors.find((m) => m.id === id)!;
   const cfg: MonitorCfg = state!.config.monitors[id] || ({ id, folder: '', intervalSec: 300, auto: true, order: 'random', transition: 'inherit', transitionMs: 0, easing: 'inherit', fit: 'cover', kenBurns: true, fixed: '', current: '' } as MonitorCfg);
   const g = state!.config.global;
@@ -224,6 +224,25 @@ function MonitorPanel({ id, toastErr }: { id: string; toastErr: (m: string) => v
             </select>
           </div>
           <SwitchRow title="Movimento sutil (Ken Burns)" desc="Zoom e deslize bem lentos enquanto a imagem fica parada." on={cfg.kenBurns} onChange={(v) => set({ kenBurns: v })} />
+          <SwitchRow
+            title="Profundidade 3D (parallax)"
+            desc={state!.depthModel
+              ? 'Separa o personagem do fundo e move cada camada numa velocidade, como os wallpapers do iPhone. Vale para todos os monitores.'
+              : 'Falta o modelo de profundidade (resources/models). Reinstale o app para usar.'}
+            on={!!g.parallax && !!state!.depthModel}
+            onChange={(v) => state!.depthModel && setGlobal({ parallax: v }).catch((e) => toastErr(e.message))} />
+          {!!g.parallax && !!state!.depthModel && (
+            <div className="parallax-opts">
+              <div className="field grow">
+                <span className="label">Intensidade da profundidade: {Math.round((g.parallaxStrength ?? 1) * 100)}%</span>
+                <input type="range" min={0.3} max={2} step={0.05} value={g.parallaxStrength ?? 1} onChange={(e) => setGlobal({ parallaxStrength: Number(e.target.value) })} />
+              </div>
+              <label className="row small muted" style={{ gap: 8 }}>
+                <Toggle on={g.parallaxMouse !== false} onChange={(v) => setGlobal({ parallaxMouse: v })} label="Seguir o mouse" /> Seguir o mouse
+              </label>
+              {g.reduceMotion && <span className="small muted">“Reduzir movimento” está ligado nos Ajustes, então o efeito fica parado.</span>}
+            </div>
+          )}
           <div className="field" style={{ marginTop: 6 }}>
             <span className="label">Apelido do monitor</span>
             <input className="input" placeholder={mon.name} defaultValue={cfg.alias} onBlur={(e) => set({ alias: e.target.value.trim() })} />
@@ -294,6 +313,40 @@ const GLYPH_BG: Record<string, string> = {
   crossZoom: 'radial-gradient(circle at 35% 50%, #fff1d6 0, #ff9a3d 18%, #2a1b12 60%)',
   zoomSpin: 'conic-gradient(from 45deg, #2a1b12, #ffb547, #2a1b12, #8a5532, #2a1b12)',
   swirlSoft: 'conic-gradient(from 0deg at 50% 50%, #3d2a52, #6b4a33, #ffb547, #3d2a52)',
+  defocus: 'radial-gradient(circle at 30% 40%, rgba(255,207,110,.7) 0 10%, transparent 30%), radial-gradient(circle at 70% 60%, rgba(255,154,61,.5) 0 14%, #2a1b12 45%)',
+  dreamyZoom: 'radial-gradient(circle at 50% 50%, #ffe1b0 0, #b9a6ff 30%, #3d2a52 60%, #1a110c 85%)',
+  displacement: 'linear-gradient(135deg, #2a1b12 0 30%, #6b4a33 38%, #2a1b12 46%, #8a5532 60%, #2a1b12 75%)',
+  perlinDissolve: 'radial-gradient(40% 50% at 30% 40%, #8a5532, transparent 70%), radial-gradient(35% 45% at 70% 65%, #b07a4c, #2a1b12 80%)',
+  glowDissolve: 'radial-gradient(circle at 50% 45%, #fff1d6 0, #ffb547 20%, #6b4a33 50%, #1a110c 80%)',
+  hueShift: 'linear-gradient(90deg, #ff6f61, #ffb547, #7fe3b4, #59d6ff, #b9a6ff)',
+  grayFade: 'linear-gradient(90deg, #6b4a33, #777 50%, #8a5532)',
+  smokeFlow: 'radial-gradient(60% 40% at 40% 80%, rgba(255,240,220,.4), transparent 70%), radial-gradient(50% 50% at 60% 30%, rgba(255,240,220,.2), #2a1b12 75%)',
+  silk: 'repeating-linear-gradient(100deg, #6b4a33 0 10px, #8a5532 14px, #6b4a33 18px)',
+  linearBlur: 'linear-gradient(90deg, #2a1b12, #6b4a33 30%, #8a5532 70%, #2a1b12)',
+  slideUp: 'linear-gradient(180deg, #6b4a33 0 48%, #120c09 48% 52%, #8a5532 52%)',
+  slideScaled: 'linear-gradient(90deg, #120c09 0 6%, #6b4a33 6% 46%, #120c09 46% 54%, #8a5532 54% 94%, #120c09 94%)',
+  slideAway: 'linear-gradient(90deg, #4a3326 0 40%, #120c09 40% 44%, #8a5532 44%)',
+  squeeze: 'linear-gradient(180deg, #8a5532 0 30%, #120c09 30% 34%, #4a3326 34%)',
+  containerExpand: 'radial-gradient(closest-side, #8a5532 0 70%, transparent 72%), #1a110c',
+  frostedGlass: 'linear-gradient(105deg, #6b4a33 0 38%, rgba(255,241,214,.55) 40% 60%, #2a1b12 62%)',
+  pageCurl: 'linear-gradient(135deg, #8a5532 0 55%, #f3e6d3 58% 66%, #2a1b12 68%)',
+  bookFlip: 'linear-gradient(90deg, #6b4a33 0 50%, #f3e6d3 50% 54%, #8a5532 54%)',
+  fold: 'linear-gradient(90deg, #6b4a33 0 30%, #3a2a20 30% 34%, #8a5532 34%)',
+  revolve: 'linear-gradient(90deg, #120c09 0 25%, #8a5532 25% 75%, #120c09 75%)',
+  zoomOut: 'radial-gradient(closest-side, #6b4a33 0 55%, #3a2a20 58%, #8a5532 80%)',
+  dolly: 'radial-gradient(closest-side, #ffb547 0 30%, #6b4a33 34% 60%, #1a110c 90%)',
+  waterDrop: 'radial-gradient(circle at 50% 50%, #8a5532 0 30%, #fff1d6 32%, #6b4a33 36%, #2a1b12 60%)',
+  lens: 'radial-gradient(circle at 40% 50%, #ffe1b0 0 10%, #8a5532 30%, #fff1d6 32%, #2a1b12 35%)',
+  blinds: 'repeating-linear-gradient(0deg, #6b4a33 0 8px, #120c09 8px 10px)',
+  hexReveal: 'radial-gradient(circle, #ffb547 0 30%, #6b4a33 32% 46%, #2a1b12 48%) 0 0 / 18px 16px',
+  tangentMotion: 'conic-gradient(from 90deg, #2a1b12, #8a5532, #ffb547, #8a5532, #2a1b12)',
+  lumaMelt: 'linear-gradient(180deg, #8a5532 0 30%, #6b4a33 50%, #2a1b12 70%), #2a1b12',
+  filmBurn: 'radial-gradient(circle at 45% 50%, #2a1b12 0 25%, #ff9a3d 30%, #fff1d6 33%, #6b4a33 40%)',
+  edgeGlow: 'linear-gradient(135deg, #1a110c 0 45%, #ffcf6e 48% 50%, #1a110c 53%)',
+  wind: 'repeating-linear-gradient(0deg, #6b4a33 0 3px, #8a5532 3px 5px, #2a1b12 5px 8px)',
+  colorPhase: 'linear-gradient(90deg, #ff6f61 0 33%, #7fe3b4 33% 66%, #59d6ff 66%), #2a1b12',
+  burnOut: 'linear-gradient(0deg, #2a1b12 0 40%, #ff6f1f 45%, #ffcf6e 48%, #6b4a33 55%)',
+  aurora: 'linear-gradient(180deg, #1a110c 0 30%, #2fd99a 45%, #9a5cff 60%, #1a110c 80%)',
 };
 
 function IntervalCustom({ value, active, onChange }: { value: number; active: boolean; onChange: (s: number) => void }) {
