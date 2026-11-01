@@ -33,7 +33,7 @@ export interface GlobalCfg {
 export interface SchedState { monitors: Record<string, { nextAt: number; occluded: boolean; error: string; busy: boolean; historySize: number }>; globalPaused: boolean; now: number }
 export interface AppState {
   version: string; platform: string; raisedDesktop: boolean; depthModel?: boolean; monitors: Monitor[]; offline: OfflineMonitor[];
-  config: { global: GlobalCfg; monitors: Record<string, MonitorCfg>; migratedFrom?: string };
+  config: { global: GlobalCfg; monitors: Record<string, MonitorCfg>; images?: Record<string, { depth?: false; cut?: number }>; migratedFrom?: string };
   scheduler: SchedState; compact: boolean; tools: { upscaler: boolean; models: string[] };
   logFile: string | null; migratedFrom: string | null;
 }

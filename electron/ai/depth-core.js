@@ -263,7 +263,13 @@ function dilate(src, W, H, r) {
  * imageFile → packed depth PNG (RGB: foreground depth, background depth, matte)
  * + a background plate JPEG with the characters removed.
  */
-async function estimate(imageFile, outFile) {
+/**
+ * Cut variants, tried one after the other by "Refazer recorte" (0 = automatic):
+ * 1 tight, 2 loose, 3 only the nearest part of the character, 4 by depth only,
+ * 5 character + near objects, 6 no cut (the picture moves as one soft sheet).
+ */
+async function estimate(imageFile, outFile, variant = 0) {
+  variant = Math.max(0, Math.min(6, Math.round(Number(variant) || 0)));
   const sharp = require('../img');
   const t0 = Date.now();
   const meta = await sharp(imageFile, { limitInputPixels: false }).metadata();
@@ -316,21 +322,48 @@ async function estimate(imageFile, outFile) {
   let matte = null;
   let cut = 'profundidade';
   let seg = null;
-  try { seg = await segment(sharp, imageFile, ow, oh); } catch (err) { log.warn('depth: recorte de anime falhou', err.message); }
+  if (variant !== 4 && variant !== 6) {
+    try { seg = await segment(sharp, imageFile, ow, oh); } catch (err) { log.warn('depth: recorte de anime falhou', err.message); }
+  }
+  // Near part of the picture by depth (used by some variants).
+  const nearCut = (lo, hi) => {
+    const m = new Float32Array(N2);
+    for (let i = 0; i < N2; i++) m[i] = smooth(t + lo, t + hi, qRef[i]);
+    const g = guidedFilter(I, m, ow, oh, Math.max(3, Math.round(ow / 320)), 2e-3);
+    for (let i = 0; i < N2; i++) g[i] = smooth(0.12, 0.6, g[i]);
+    return g;
+  };
   if (seg) {
     let cover = 0;
     for (let i = 0; i < N2; i++) if (seg[i] > 0.5) cover++;
     if (cover > N2 * 0.005 && cover < N2 * 0.92) {
       matte = seg;
-      for (let i = 0; i < N2; i++) matte[i] = smooth(0.04, 0.96, matte[i]);
+      if (variant === 1) {
+        for (let i = 0; i < N2; i++) matte[i] = smooth(0.4, 0.8, matte[i]);
+        matte = erode(matte, ow, oh, Math.max(1, Math.round(ow / 640)));
+      } else if (variant === 2) {
+        for (let i = 0; i < N2; i++) matte[i] = smooth(0.01, 0.4, matte[i]);
+        const grownM = dilate(matte, ow, oh, Math.max(2, Math.round(ow / 220)));
+        matte = boxBlur(grownM, ow, oh, Math.max(1, Math.round(ow / 640)));
+      } else {
+        for (let i = 0; i < N2; i++) matte[i] = smooth(0.04, 0.96, matte[i]);
+      }
+      if (variant === 3) {
+        const near = nearCut(-0.1, 0.04);
+        for (let i = 0; i < N2; i++) matte[i] *= near[i];
+      } else if (variant === 5) {
+        const near = nearCut(0.02, 0.12);
+        for (let i = 0; i < N2; i++) matte[i] = Math.max(matte[i], near[i]);
+      }
       cut = 'anime';
     }
   }
+  if (variant === 6) { matte = new Float32Array(N2); cut = 'unica'; }
   // No character found: a scene whose near part runs along the whole bottom
   // (ground, hills, water) is a landscape and moves as one soft sheet. A compact
   // near shape (e.g. realistic 3D characters the anime model doesn't know) still
   // gets cut out by depth.
-  if (!matte && seg && looksLikeGround(qRef, t, ow, oh)) {
+  if (!matte && seg && variant === 0 && looksLikeGround(qRef, t, ow, oh)) {
     matte = new Float32Array(N2);
     cut = 'paisagem';
   }
@@ -349,10 +382,11 @@ async function estimate(imageFile, outFile) {
   // keeps its real pixels and its real depth.
   const holeBin = new Float32Array(N2);
   let holeCount = 0;
-  for (let i = 0; i < N2; i++) if (matte[i] > (cut === 'anime' ? 0.02 : 0.06)) holeBin[i] = 1;
-  const grown = dilate(holeBin, ow, oh, Math.max(3, Math.round(ow / 320)));
+  for (let i = 0; i < N2; i++) if (matte[i] > (cut === 'anime' ? (variant === 1 ? 0.2 : 0.02) : 0.06)) holeBin[i] = 1;
+  const grow = Math.max(3, Math.round(ow / 320)) * (variant === 2 ? 2 : 1);
+  const grown = dilate(holeBin, ow, oh, variant === 1 ? Math.max(2, Math.round(grow * 0.6)) : grow);
   for (let i = 0; i < N2; i++) if (grown[i] > 0.5) holeCount++;
-  const useLayers = cut !== 'paisagem' && holeCount > N2 * 0.002 && holeCount < N2 * 0.95;
+  const useLayers = cut !== 'paisagem' && cut !== 'unica' && holeCount > N2 * 0.002 && holeCount < N2 * 0.95;
 
   // Background depth: the hole filled in from the surroundings (no walls left).
   const bgDepth = useLayers ? fillFromOutside(qRef, grown, ow, oh, 1) : Float32Array.from(qRef);
@@ -467,6 +501,7 @@ async function estimate(imageFile, outFile) {
   await sharp(plate, { raw: { width: ow, height: oh, channels: 3 } }).jpeg({ quality: 90, chromaSubsampling: '4:4:4' }).toFile(tmpPlate);
   await fs.promises.rename(tmpPlate, plateFile);
   const analysis = analyse({ rgbO, I, matte, q, bgSmooth, ow, oh, useLayers, cut, plateBy });
+  analysis.variant = variant;
   // Faces/eyes, normalised (0..1, y from the top) for the renderer.
   const nb = (b) => ({ x0: +(b.x0 / ow).toFixed(4), y0: +(b.y0 / oh).toFixed(4), x1: +(b.x1 / ow).toFixed(4), y1: +(b.y1 / oh).toFixed(4) });
   analysis.faces = fe.faces.map(nb);
@@ -804,6 +839,15 @@ function looksLikeGround(d, t, W, H) {
 function smooth(a, b, x) {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
+}
+
+/** Min filter (shrinks a 0..1 mask by r pixels). */
+function erode(m, w, h, r) {
+  const inv = new Float32Array(m.length);
+  for (let i = 0; i < m.length; i++) inv[i] = 1 - m[i];
+  const d = dilate(inv, w, h, r);
+  for (let i = 0; i < d.length; i++) d[i] = 1 - d[i];
+  return d;
 }
 
 /** Otsu threshold on a 0..1 map: the depth that best splits near from far. */

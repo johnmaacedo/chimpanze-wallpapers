@@ -112,9 +112,48 @@ class Scheduler extends EventEmitter {
     return (!!g.parallax || g.parallaxBlink !== false) && !g.reduceMotion && depth.exists();
   }
 
+  /** Per-picture choices: 3D switched off for it, and which cut variant it uses. */
+  imgDepth(file) {
+    const o = this.config.image(file);
+    return { off: o.depth === false, cut: o.cut || 0 };
+  }
+
+  /** The picture needs no depth map at all (3D off for it and no blinking). */
+  noDepthFor(file) {
+    return this.imgDepth(file).off && this.config.global.parallaxBlink === false;
+  }
+
+  /** The file actually put on screen for a picture (4K or edited version). */
+  shownFor(file) {
+    const g = this.config.global;
+    return g.preferUpscaled ? library.bestVersion(file) : (library.editedPathFor(file) || file);
+  }
+
+  /** Monitors whose current picture is `file`. */
+  monitorsShowing(file) {
+    const key = path.resolve(String(file)).toLowerCase();
+    return this.monitors.monitors.filter((m) => {
+      const c = this.config.monitor(m.id).current;
+      return c && path.resolve(c).toLowerCase() === key && this.hosts.get(m.id);
+    });
+  }
+
+  /** Shows `file` again (no transition) wherever it is on screen, with its new depth choices. */
+  redisplayFile(file) {
+    for (const m of this.monitorsShowing(file)) this.display(m.id, this.config.monitor(m.id).current, { keepCurrent: true, instant: true });
+  }
+
+  /** "Refazer recorte": makes the depth with another cut variant, then puts it on screen. */
+  async recut(file, variant) {
+    if (!depth.exists()) throw new Error('Falta o modelo de profundidade.');
+    await depth.get(this.shownFor(file), variant);
+    this.config.setImage(file, { cut: variant });
+    this.redisplayFile(file);
+  }
+
   /** Sends a depth map to a monitor once it is ready (if the picture is still the one shown). */
-  lateDepth(id, file, tok, url) {
-    depth.get(file).then((r) => {
+  lateDepth(id, file, tok, url, variant = 0) {
+    depth.get(file, variant).then((r) => {
       const s = this.st(id);
       const host = this.hosts.get(id);
       if (tok !== s.showToken || !host || !this.depthOn()) return;
@@ -131,7 +170,9 @@ class Scheduler extends EventEmitter {
       const host = this.hosts.get(mon.id);
       const last = host && host.lastShow;
       if (!last || last.type !== 'image' || last.depthUrl || !last.path) continue;
-      this.lateDepth(mon.id, last.path, this.st(mon.id).showToken, last.url);
+      const src = last.src || last.path;
+      if (this.noDepthFor(src)) continue;
+      this.lateDepth(mon.id, last.path, this.st(mon.id).showToken, last.url, this.imgDepth(src).cut);
     }
   }
 
@@ -151,9 +192,8 @@ class Scheduler extends EventEmitter {
       } else {
         nextFile = s.bag[0];
       }
-      if (!nextFile || library.mediaType(nextFile) !== 'image') return;
-      const shown = this.config.global.preferUpscaled ? library.bestVersion(nextFile) : (library.editedPathFor(nextFile) || nextFile);
-      await depth.get(shown);
+      if (!nextFile || library.mediaType(nextFile) !== 'image' || this.noDepthFor(nextFile)) return;
+      await depth.get(this.shownFor(nextFile), this.imgDepth(nextFile).cut);
     } catch (_) { /* best effort */ }
   }
 
@@ -274,9 +314,12 @@ class Scheduler extends EventEmitter {
     let easing = cfg.easing === 'inherit' ? g.easing : cfg.easing;
     if (!EASINGS.includes(easing)) easing = 'easeInOutCubic';
     const duration = g.reduceMotion ? 450 : (cfg.transitionMs || g.transitionMs || 1600);
+    const io = this.imgDepth(file);
     const msg = {
       url: mediaUrl(shown),
       path: shown,
+      src: file,
+      parOff: io.off,
       type,
       transition: g.reduceMotion ? 'fade' : transition,
       duration,
@@ -290,16 +333,16 @@ class Scheduler extends EventEmitter {
       host.setSettings(this.rendererSettings(cfg));
       host.show(d ? Object.assign({ depthUrl: mediaUrl(d.depth), plateUrl: mediaUrl(d.plate), lidsUrl: d.lids ? mediaUrl(d.lids) : null, analysis: d.analysis }, msg) : msg);
     };
-    if (type === 'image' && this.depthOn()) {
-      const ready = depth.cached(shown);
+    if (type === 'image' && this.depthOn() && !this.noDepthFor(file)) {
+      const ready = depth.cached(shown, io.cut);
       if (ready) send(ready);
-      else if (opts.instant) { send(null); this.lateDepth(id, shown, tok, msg.url); }
+      else if (opts.instant) { send(null); this.lateDepth(id, shown, tok, msg.url, io.cut); }
       else {
         // A new picture waits a moment for its depth so it arrives already in 3D;
         // if that takes too long it shows flat and the depth fades in later.
         let timer;
-        Promise.race([depth.get(shown), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('timeout')), 4500); })])
-          .then((d) => { clearTimeout(timer); send(d); }, () => { clearTimeout(timer); send(null); this.lateDepth(id, shown, tok, msg.url); });
+        Promise.race([depth.get(shown, io.cut), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('timeout')), 4500); })])
+          .then((d) => { clearTimeout(timer); send(d); }, () => { clearTimeout(timer); send(null); this.lateDepth(id, shown, tok, msg.url, io.cut); });
       }
       setTimeout(() => this.prefetchDepth(id), duration + 2500);
     } else {

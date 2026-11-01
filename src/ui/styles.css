@@ -2231,6 +2231,20 @@ input[type="range"]:active::-webkit-slider-thumb { transform: scale(1.22); box-s
 @keyframes depthGlow { from { transform: translate(0, 0) scale(1); } to { transform: translate(-60px, 40px) scale(1.15); } }
 .depth-head { display: flex; align-items: flex-start; gap: 14px; justify-content: space-between; position: relative; }
 .depth-head > div { display: flex; flex-direction: column; gap: 6px; }
+.depth-img { display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: 14px; border: 1px solid var(--line); background: var(--cocoa-2); transition: border-color 0.25s, background 0.25s; }
+.depth-img.on { border-color: color-mix(in srgb, var(--mango) 38%, transparent); background: color-mix(in srgb, var(--mango) 7%, var(--cocoa-2)); }
+.depth-img b { font-size: 13px; }
+.depth-img-ico { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; flex: none; color: var(--mango); background: color-mix(in srgb, var(--mango) 14%, transparent); }
+.depth-img-attempt { display: flex; align-items: center; gap: 6px; color: var(--ink-2); font-weight: 600; }
+.depth-img.compact { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; margin-top: 8px; }
+.depth-img.compact .depth-img-label { flex: 1 1 140px; min-width: 0; }
+.cut-preview { position: relative; display: grid; place-items: center; width: 100%; }
+.cut-preview canvas { max-width: 100%; max-height: 74vh; display: block; }
+.cut-legend { position: absolute; left: 12px; bottom: 12px; padding: 5px 10px; border-radius: 999px; font-size: 11.5px; background: #000a; color: var(--ink); }
+.badge.d3off { background: #2a1f1acc; color: var(--muted); }
+.badge.cutn { background: color-mix(in srgb, var(--mango) 25%, #000a); color: var(--mango); }
+.spin { animation: cw-spin 0.9s linear infinite; }
+@keyframes cw-spin { to { transform: rotate(360deg); } }
 .blink-row { display: flex; align-items: center; gap: 12px; margin-top: 14px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line); background: var(--cocoa-2); position: relative; transition: border-color 0.25s, background 0.25s; }
 .blink-row.on { border-color: color-mix(in srgb, var(--mango) 45%, transparent); background: color-mix(in srgb, var(--mango) 9%, transparent); }
 .blink-row .blink-ico { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; flex: none; color: var(--ink-2); background: rgba(255, 255, 255, 0.05); transition: color 0.25s, background 0.25s; }

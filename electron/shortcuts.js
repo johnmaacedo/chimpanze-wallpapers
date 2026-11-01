@@ -13,6 +13,8 @@ const ACTIONS = [
   { id: 'pause', label: 'Pausar / retomar as trocas automáticas', key: 'Ctrl+Shift+Space' },
   { id: 'parallax', label: 'Profundidade 3D (liga / desliga)', key: 'Ctrl+Shift+D' },
   { id: 'blink', label: 'Piscar dos olhos (liga / desliga)', key: 'Ctrl+Shift+P' },
+  { id: 'depthImage', label: '3D só no wallpaper atual (liga / desliga)', key: 'Ctrl+Shift+3', perMonitor: true },
+  { id: 'recut', label: 'Refazer o recorte do wallpaper atual', key: 'Ctrl+Shift+X', perMonitor: true },
   { id: 'window', label: 'Mostrar / esconder o app', key: 'Ctrl+Alt+W' },
 ];
 

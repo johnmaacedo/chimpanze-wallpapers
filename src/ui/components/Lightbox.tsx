@@ -4,6 +4,7 @@ import { X, Pin, Play, Sparkles, FolderSearch, WandSparkles, ChevronLeft, Chevro
 import { api, useStore, mediaUrl, fmtBytes, type MediaItem } from '../api';
 import { Btn } from './controls';
 import { UpscaleConfirm } from './UpscalePicker';
+import { CutPreview, DepthImageControls } from './DepthImage';
 
 export function Lightbox({ items, index, onClose, onIndex, onEdit }: { items: MediaItem[]; index: number; onClose: () => void; onIndex: (i: number) => void; onEdit?: (path: string) => void }) {
   const { state, toast } = useStore();
@@ -12,6 +13,7 @@ export function Lightbox({ items, index, onClose, onIndex, onEdit }: { items: Me
   const [cut, setCut] = useState(50);
   const [compare, setCompare] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [cutView, setCutView] = useState(false);
 
   useEffect(() => {
     setSize(null);
@@ -46,7 +48,9 @@ export function Lightbox({ items, index, onClose, onIndex, onEdit }: { items: Me
       <motion.div className="lightbox" initial={{ scale: 0.94, y: 20, opacity: 0 }} animate={{ scale: 1, y: 0, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }}
         transition={{ type: 'spring', stiffness: 320, damping: 30 }} onClick={(e) => e.stopPropagation()}>
         <div className="view">
-          {compare && item.upscaled ? (
+          {cutView && item.type === 'image' ? (
+            <CutPreview file={item.path} image={item.edited || item.upscaled || item.path} />
+          ) : compare && item.upscaled ? (
             <div className="compare" style={{ ['--cut' as any]: `${cut}%`, minHeight: '70vh' }}
               onMouseMove={(e) => { const r = (e.currentTarget as HTMLDivElement).getBoundingClientRect(); setCut(((e.clientX - r.left) / r.width) * 100); }}>
               <img src={mediaUrl(item.path)} alt="" />
@@ -84,6 +88,8 @@ export function Lightbox({ items, index, onClose, onIndex, onEdit }: { items: Me
               </div>
             ))}
           </div>
+
+          {item.type === 'image' && <DepthImageControls file={item.path} preview={cutView} onPreview={setCutView} />}
 
           {item.type === 'image' && (
             <div className="stack" style={{ gap: 8 }}>
