@@ -35,10 +35,22 @@ function modelPath() {
 }
 const cacheDir = () => path.join(app.getPath('userData'), 'depth');
 
-function cachePath(file) {
+/** What each "Refazer recorte" attempt does (index = variant; 0 = automatic). */
+const CUTS = [
+  'Automático',
+  'Recorte justo (menos fundo grudado no personagem)',
+  'Recorte folgado (pega fios de cabelo e pontas)',
+  'Só a parte mais próxima do personagem',
+  'Pela profundidade (sem o recorte de anime)',
+  'Personagem + objetos próximos (armas, mãos)',
+  'Sem recorte (a imagem se move inteira, suave)',
+];
+
+function cachePath(file, variant = 0) {
   let st;
   try { st = fs.statSync(file); } catch (_) { return null; }
-  const key = crypto.createHash('sha1').update(`${VERSION}|${path.resolve(file).toLowerCase()}|${st.size}|${Math.round(st.mtimeMs)}`).digest('hex');
+  const v = variant > 0 ? `|cut${variant}` : '';
+  const key = crypto.createHash('sha1').update(`${VERSION}|${path.resolve(file).toLowerCase()}|${st.size}|${Math.round(st.mtimeMs)}${v}`).digest('hex');
   return path.join(cacheDir(), key.slice(0, 2), key + '.png');
 }
 
@@ -82,13 +94,13 @@ function release() {
   }
 }
 
-function runInWorker(image, out) {
+function runInWorker(image, out, variant) {
   clearTimeout(idleTimer);
   const c = start();
   const id = ++seq;
   return new Promise((resolve, reject) => {
     pending.set(id, { resolve, reject });
-    c.postMessage({ id, image, out });
+    c.postMessage({ id, image, out, variant });
   });
 }
 
@@ -120,9 +132,9 @@ const result = (out) => ({ depth: out, plate: plateFor(out), lids: fs.existsSync
 const complete = (out) => fs.existsSync(out) && fs.existsSync(plateFor(out)) && fs.existsSync(infoFor(out));
 
 /** Cached { depth, plate } for `file` if it already exists (no work), else null. */
-function cached(file) {
+function cached(file, variant = 0) {
   checkCacheVersion();
-  const out = cachePath(file);
+  const out = cachePath(file, variant);
   return out && complete(out) ? result(out) : null;
 }
 
@@ -141,9 +153,9 @@ function checkCacheVersion() {
 }
 
 /** { depth, plate } for an image (made once, then served from the cache). */
-function get(file) {
+function get(file, variant = 0) {
   checkCacheVersion();
-  const out = cachePath(file);
+  const out = cachePath(file, variant);
   if (!out) return Promise.reject(new Error('Arquivo não encontrado.'));
   if (complete(out)) {
     const now = new Date();
@@ -155,8 +167,8 @@ function get(file) {
   // One picture at a time: the GPU work is short, and this keeps VRAM low.
   const job = queue.then(async () => {
     if (complete(out)) return result(out);
-    const r = await runInWorker(file, out);
-    log.info('depth: mapa pronto', path.basename(file), `${r.width}x${r.height}`, r.provider, `recorte ${r.cut}`, `fundo ${r.plate}`, r.analysis ? `tipo ${r.analysis.kind} faixa ${r.analysis.band}px rostos ${r.faces} olhos ${r.eyes}` : '', `${r.ms} ms`);
+    const r = await runInWorker(file, out, variant);
+    log.info('depth: mapa pronto', path.basename(file), variant ? `tentativa ${variant}` : '', `${r.width}x${r.height}`, r.provider, `recorte ${r.cut}`, `fundo ${r.plate}`, r.analysis ? `tipo ${r.analysis.kind} faixa ${r.analysis.band}px rostos ${r.faces} olhos ${r.eyes}` : '', `${r.ms} ms`);
     if (++writes % 40 === 0) prune();
     return result(out);
   });
@@ -166,4 +178,4 @@ function get(file) {
   return job;
 }
 
-module.exports = { get, cached, release, modelPath, exists: () => fs.existsSync(modelPath()) };
+module.exports = { get, cached, release, modelPath, CUTS, exists: () => fs.existsSync(modelPath()) };

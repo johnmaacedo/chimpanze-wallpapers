@@ -1,4 +1,4 @@
-# Chimpanzé Wallpapers — v1.5.5
+# Chimpanzé Wallpapers — v1.5.6
 
 Wallpapers independentes por monitor para Windows, com transições em GPU estilo motion design, profundidade 3D (parallax) com recorte por IA, personagens de anime que piscam, upscale 4K com IA e um editor de imagem. Tudo roda **local** na sua placa de vídeo.
 
@@ -6,7 +6,7 @@ Wallpapers independentes por monitor para Windows, com transições em GPU estil
 
 ## Instalar (usuário)
 
-1. Baixe `Chimpanze-Wallpapers-Setup-1.5.5.exe` na página **[Releases](../../releases)**.
+1. Baixe `Chimpanze-Wallpapers-Setup-1.5.6.exe` na página **[Releases](../../releases)**.
 2. Rode o instalador e siga os passos. Guia completo, passo a passo e com solução de problemas: **[docs/INSTALACAO.md](docs/INSTALACAO.md)**.
 
 Requisitos: Windows 10 ou 11 (64 bits), placa de vídeo com DirectX 12 (NVIDIA, AMD ou Intel) e cerca de 1,5 GB livres. A edição por IA do Editor usa o aplicativo do ChatGPT para Windows (opcional).
@@ -21,6 +21,7 @@ Requisitos: Windows 10 ou 11 (64 bits), placa de vídeo com DirectX 12 (NVIDIA, 
   - **análise automática** de cada wallpaper (anime, foto ou paisagem; quantos personagens; cabelo solto; fundo detalhado), que limita o movimento ao que a imagem aguenta sem defeitos;
   - presets Automático, Anime, Paisagem, Pessoas reais e Manual; 7 movimentos de câmera (Órbita, Caminhada, Travelling, Aproximação, Flutuar, Respiração, Balanço);
   - **personagens de anime piscam** de vez em quando (piscada simples, dupla e, raramente, uma piscadela), com pálpebra e cílios descendo juntos, só nos rostos em que o efeito fica natural. Tem um botão próprio ("Piscar dos olhos") e funciona mesmo com a profundidade 3D desligada.
+  - **por imagem:** dá para desligar o 3D só num wallpaper e **refazer o recorte** dos personagens (6 tentativas diferentes, com prévia do recorte na Galeria) quando a separação do fundo não ficou boa.
 - **Atalhos de teclado globais** (funcionam com o app minimizado ou na bandeja): próximo/anterior (Ctrl+Shift+N / B), fixar (Ctrl+Shift+F), pausar (Ctrl+Shift+Espaço), profundidade 3D (Ctrl+Shift+D), piscar (Ctrl+Shift+P) e mostrar o app (Ctrl+Alt+W). Agem no monitor onde está o mouse; com Alt junto, em todos. Dá para mudar cada um em Ajustes.
 - **Upscale 4K/5K/8K** (Real-ESRGAN na GPU) escolhendo imagens da galeria do app, com confirmação e comparação antes/depois.
 - **Editor:** ajustes de imagem, recorte, borracha de marca d'água por IA (LaMa) e edição pelo app do ChatGPT.

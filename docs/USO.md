@@ -14,11 +14,15 @@
   - **Movimento:** Automático, Órbita, Caminhada, Travelling, Aproximação, Flutuar, Respiração ou Balanço.
   - **A cena também segue o mouse.**
   - **Piscar dos olhos** (botão próprio, logo abaixo da chave da Profundidade 3D; funciona mesmo com a profundidade desligada): cada rosto de anime pisca no seu ritmo, a cada 2,5–7 s (às vezes piscada dupla; raramente uma piscadela). O olho fecha por inteiro: a pálpebra e os cílios de cima descem até a pálpebra de baixo. Só pisca o rosto em que o efeito fica natural: os dois olhos visíveis e de tamanhos parecidos, cabeça não muito inclinada nem virada, olhos não gigantes e não desenhados já fechados.
+- **3D por imagem e "Refazer recorte"** (no cartão do wallpaper atual de cada monitor e na Galeria, ao abrir uma imagem):
+  - **3D nesta imagem:** desliga a profundidade só naquele wallpaper (ele fica parado, mas ainda pisca); os outros continuam em 3D. Na Galeria, a imagem ganha a etiqueta "3D off".
+  - **Refazer recorte:** se o personagem ficou mal separado do fundo, clique e a IA recorta de outro jeito; o monitor muda sozinho em alguns segundos. São 6 tentativas, em ordem: recorte justo, recorte folgado (pega fios de cabelo), só a parte mais próxima do personagem, pela profundidade, personagem + objetos próximos (armas, mãos) e sem recorte (a imagem se move inteira, suave). **Anterior** volta uma tentativa e **Automático** volta ao começo. A escolha fica guardada para aquela imagem (etiqueta "Recorte N" na Galeria).
+  - **Ver o recorte na imagem** (Galeria): mostra o personagem em destaque, o fundo escurecido e o contorno do recorte em laranja, para julgar cada tentativa.
 - **Troca automática:** intervalo (de 30 s a 1 dia, ou personalizado), ordem aleatória ou em sequência, subpastas.
 - **Enquadramento:** Preencher, Ajustar (fundo desfocado), Esticar ou Centralizar; Ken Burns (zoom lento).
 
 ## Galeria
-Veja os wallpapers das pastas do app, aplique em qualquer monitor, compare antes/depois do 4K e mande para o Editor.
+Veja os wallpapers das pastas do app, aplique em qualquer monitor, compare antes/depois do 4K e mande para o Editor. Ao abrir uma imagem: **Profundidade 3D nesta imagem**, **Refazer recorte** e **Ver o recorte na imagem**.
 
 ## Upscale 4K
 1. **Escolher da galeria** (padrão), **Do computador** ou **Pasta inteira**.
@@ -42,6 +46,8 @@ Funcionam em qualquer programa, mesmo com o app minimizado ou só na bandeja. Ag
 | Pausar / retomar as trocas automáticas | Ctrl+Shift+Espaço |
 | Profundidade 3D liga/desliga | Ctrl+Shift+D |
 | Piscar dos olhos liga/desliga | Ctrl+Shift+P |
+| 3D só no wallpaper atual liga/desliga | Ctrl+Shift+3 |
+| Refazer o recorte do wallpaper atual (próxima tentativa) | Ctrl+Shift+X |
 | Mostrar / esconder o app | Ctrl+Alt+W |
 
 Em **Ajustes > Atalhos** você liga/desliga cada um, troca a combinação (clique nas teclas e aperte a nova; Esc cancela, Backspace deixa sem atalho) e volta tudo com **Restaurar padrão**. Pausar, fixar e os liga/desliga mostram um aviso rápido do Windows (dá para desligar em "Mostrar aviso"). Se outro programa já usa uma combinação, o atalho fica marcado em vermelho com o aviso: grave outra.

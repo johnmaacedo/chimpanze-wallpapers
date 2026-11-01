@@ -73,6 +73,8 @@ function defaultMonitor(id) {
   };
 }
 
+const imageKey = (file) => path.resolve(String(file)).toLowerCase();
+
 class ConfigStore {
   constructor() {
     this.dir = app.getPath('userData');
@@ -110,6 +112,7 @@ class ConfigStore {
       data.global.parallaxV152 = true;
     }
     data.monitors = data.monitors || {};
+    data.images = data.images && typeof data.images === 'object' ? data.images : {};
     for (const id of Object.keys(data.monitors)) {
       data.monitors[id] = Object.assign(defaultMonitor(id), data.monitors[id]);
     }
@@ -167,6 +170,21 @@ class ConfigStore {
     Object.assign(m, patch || {});
     this.save();
     return m;
+  }
+
+  /** Per-picture depth settings: { depth: false } = 3D off, { cut: n } = cut variant. */
+  image(file) {
+    return (file && this.data.images[imageKey(file)]) || {};
+  }
+
+  setImage(file, patch) {
+    const key = imageKey(file);
+    const next = Object.assign({}, this.data.images[key], patch);
+    if (next.depth !== false) delete next.depth;
+    if (!next.cut) delete next.cut;
+    if (Object.keys(next).length) this.data.images[key] = next; else delete this.data.images[key];
+    this.save();
+    return this.image(file);
   }
 
   forgetMonitor(id) {

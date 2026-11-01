@@ -20,6 +20,8 @@ export interface ShowMsg {
   plateUrl?: string;
   /** The picture with its eyes painted over with skin (anime blinking). */
   lidsUrl?: string | null;
+  /** 3D switched off for this one picture (it still blinks). */
+  parOff?: boolean;
   /** What the picture is and how far it can move without artifacts (from the depth pass). */
   analysis?: ParAnalysis | null;
 }
@@ -128,6 +130,7 @@ class Media {
   plateTex: WebGLTexture | null = null;
   lidsTex: WebGLTexture | null = null;
   analysis: ParAnalysis | null = null;
+  parOff = false;
   /** Per face: when it blinks next, and the blink in progress (start, kind). */
   blinks: { next: number; start: number; kind: 'single' | 'double' | 'wink'; eye: number }[] = [];
   /** When the depth map arrived (parallax fades in from there). */
@@ -552,6 +555,7 @@ export class Engine {
       // Depth that is ready up front comes in without a fade (the picture arrives in 3D).
       if (msg.depthUrl) await media.loadDepth(msg.depthUrl, msg.plateUrl, false, msg.lidsUrl).catch(() => {});
       media.analysis = msg.analysis || null;
+      media.parOff = !!msg.parOff;
     } catch (err: any) {
       media.dispose();
       this.onError?.(`Falha ao carregar ${decodeURIComponent(msg.url.split('/').pop() || '')}: ${err.message || err}`);
@@ -695,7 +699,7 @@ export class Engine {
   }
 
   private parCamera(m: Media, now: number): [number, number, number, number] {
-    if (!m.depthTex || this.parAmt < 0.001) return [0, 0, 0, 0];
+    if (!m.depthTex || m.parOff || this.parAmt < 0.001) return [0, 0, 0, 0];
     const fade = Math.min(1, (now - m.depthAt) / PAR_FADE_MS);
     const amt = this.parAmt * fade * fade * (3 - 2 * fade);
     const ps = this.parSettings(m);
@@ -821,7 +825,7 @@ export class Engine {
       requestAnimationFrame(() => this.onFirstFrame?.());
     }
     const animated = this.to.animated || (this.from?.animated ?? false);
-    const parActive = this.parAmt > 0.001 && !!(this.to.depthTex || fromM.depthTex);
+    const parActive = this.parAmt > 0.001 && !!((this.to.depthTex && !this.to.parOff) || (fromM.depthTex && !fromM.parOff));
     if (!this.paused && (this.transition !== 'idle' || this.kenBurns || animated || parActive || (this.parallax && this.parAmt < 1))) this.kick();
     else if (this.paused && this.transition !== 'idle') this.kick();
     else {

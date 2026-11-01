@@ -4,6 +4,7 @@ import { FolderOpen, ScanSearch, MonitorSmartphone, SkipBack, SkipForward, Pin, 
 import { api, useStore, useThumb, thumbUrl, fileName, folderName, TRANSITION_LABELS, TRANSITION_LIST, TRANSITION_CATEGORIES, EASING_LABELS, FIT_LABELS, type MonitorCfg, type MediaItem } from '../api';
 import { MonitorStage, useCountdown } from '../components/MonitorStage';
 import { Btn, Segmented, SwitchRow, Toggle } from '../components/controls';
+import { DepthImageControls } from '../components/DepthImage';
 import { TransitionPreview } from '../components/TransitionPreview';
 
 const PRESETS = [
@@ -151,6 +152,7 @@ function MonitorPanel({ id, toastErr }: { id: string; toastErr: (m: string) => v
                       ? <Btn className="sm" onClick={() => set({ fixed: '' })}><PinOff size={14} /> Soltar</Btn>
                       : <Btn className="sm" onClick={() => current && set({ fixed: current })}><Pin size={14} /> Fixar este</Btn>}
                   </div>
+                  {/\.(jpe?g|png|webp|bmp|avif)$/i.test(current) && <DepthImageControls file={current} compact />}
                 </div>
               </div>
             )}

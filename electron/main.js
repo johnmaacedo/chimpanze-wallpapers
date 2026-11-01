@@ -471,6 +471,13 @@ function publicState() {
 
 function safe(fn, fallback) { try { return fn(); } catch (_) { return fallback; } }
 
+function imageDepthInfo(file) {
+  const cuts = require('./ai/depth').CUTS;
+  const o = config.image(file);
+  const cut = Math.min(cuts.length - 1, o.cut || 0);
+  return { off: o.depth === false, cut, label: cuts[cut], count: cuts.length };
+}
+
 // ---------------------------------------------------------------------------
 // Settings changes (from the UI and from the global shortcuts)
 
@@ -596,6 +603,31 @@ async function runShortcut(id, { all }) {
       }
       return;
     }
+    case 'depthImage':
+    case 'recut': {
+      const list = targets().filter((m) => hasContent(m.id) && /.(jpe?g|png|webp|bmp|avif)$/i.test(config.monitor(m.id).current || ''));
+      if (!list.length) { feedback('Nenhuma imagem no ar', 'Este monitor não está mostrando uma imagem do app.', 'warn'); return; }
+      const files = [...new Set(list.map((m) => config.monitor(m.id).current))];
+      if (id === 'depthImage') {
+        const on = files.some((f) => config.image(f).depth === false);
+        for (const f of files) { config.setImage(f, { depth: on ? undefined : false }); scheduler.redisplayFile(f); }
+        broadcast('state', publicState());
+        feedback(on ? '3D ligado neste wallpaper' : '3D desligado neste wallpaper', on ? 'Esta imagem volta a se mover em camadas.' : 'Esta imagem fica parada; as outras continuam em 3D.', on ? 'ok' : 'info');
+        return;
+      }
+      const depth = require('./ai/depth');
+      if (!depth.exists()) { feedback('Profundidade 3D indisponível', 'O modelo de profundidade não está instalado.', 'warn'); return; }
+      feedback('Refazendo o recorte…', 'A IA está recortando os personagens de outro jeito.', 'info');
+      for (const f of files) {
+        const v = ((config.image(f).cut || 0) + 1) % depth.CUTS.length;
+        try {
+          await scheduler.recut(f, v);
+          feedback(v ? `Recorte: tentativa ${v} de ${depth.CUTS.length - 1}` : 'Recorte automático de volta', depth.CUTS[v], 'ok');
+        } catch (err) { feedback('Não deu para refazer o recorte', err.message, 'error'); }
+      }
+      broadcast('state', publicState());
+      return;
+    }
     case 'pin': {
       const list = targets().filter((m) => hasContent(m.id));
       if (!list.length) { feedback('Nada para fixar', 'Este monitor não está mostrando um wallpaper do app.', 'warn'); return; }
@@ -662,6 +694,28 @@ function registerIpc() {
   });
   h('media:url', (file) => proto.mediaUrl(file));
   h('media:size', (file) => library.imageSize(file));
+  // Per-picture depth: switch the 3D off/on for one wallpaper, and redo its cut.
+  h('image:depth', (file) => imageDepthInfo(file));
+  h('image:depth:set', (file, on) => {
+    config.setImage(file, { depth: on ? undefined : false });
+    scheduler.redisplayFile(file);
+    broadcast('state', publicState());
+    return imageDepthInfo(file);
+  });
+  h('image:recut', async (file, mode) => {
+    const n = require('./ai/depth').CUTS.length;
+    const cur = config.image(file).cut || 0;
+    const v = mode === 'auto' ? 0 : mode === 'prev' ? (cur + n - 1) % n : typeof mode === 'number' ? Math.max(0, Math.min(n - 1, mode | 0)) : (cur + 1) % n;
+    await scheduler.recut(file, v);
+    broadcast('state', publicState());
+    return imageDepthInfo(file);
+  });
+  h('image:cutPreview', async (file) => {
+    const depth = require('./ai/depth');
+    if (!depth.exists()) return null;
+    const d = await depth.get(scheduler.shownFor(file), config.image(file).cut || 0);
+    return proto.mediaUrl(d.depth);
+  });
   h('shell:open', (p) => shell.openPath(p));
   h('shell:reveal', (p) => { shell.showItemInFolder(p); return true; });
   h('shell:external', (url) => { if (/^https?:/.test(url)) shell.openExternal(url); return true; });
