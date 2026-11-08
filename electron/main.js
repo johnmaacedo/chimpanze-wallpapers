@@ -761,6 +761,17 @@ function registerIpc() {
     return out;
   });
   h('editor:writeTemp', (bytes) => { const f = workFile(); fs.writeFileSync(f, Buffer.from(bytes)); return f; });
+  // "Encaixe automático": where the pasted picture sits in the edited one (worker thread).
+  h('editor:autoAlign', (basePath, layerPath) => new Promise((resolve, reject) => {
+    const { Worker } = require('worker_threads');
+    const w = new Worker(path.join(__dirname, 'align-worker.js'), { workerData: { base: basePath, layer: layerPath } });
+    const t0 = Date.now();
+    w.once('message', (m) => {
+      w.terminate();
+      if (m.ok) { log.info('editor: encaixe automático', JSON.stringify(m.r.px), 'confiança', m.r.score.toFixed(3), `${Date.now() - t0} ms`); resolve(m.r); } else reject(new Error(m.error));
+    });
+    w.once('error', (err) => reject(err));
+  }));
   // Picture copied to the clipboard (e.g. "Copiar imagem" in ChatGPT), saved as a work file.
   h('editor:clipboardImage', () => {
     const img = clipboard.readImage();

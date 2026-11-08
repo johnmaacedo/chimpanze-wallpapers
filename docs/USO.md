@@ -33,17 +33,25 @@ Veja os wallpapers das pastas do app, aplique em qualquer monitor, compare antes
 Ajustes (exposição, contraste, cor, nitidez…), recorte, **borracha** de marca d'água por IA e **edição pelo ChatGPT** (Expandir para o formato do monitor, Remover objeto, Melhorar, Livre). Essa última exige o app do ChatGPT instalado; o Chimpanzé cola a imagem e o pedido e pega o resultado quando você baixar ou copiar a imagem.
 
 - **Abrir:** do computador (**Abrir**) ou da galeria do app (**Da galeria**).
-- **Colar** (aba nova): coloca outra imagem por cima da que está aberta. Serve, por exemplo, para pôr o original de volta no centro de uma expansão do ChatGPT (quando você escondeu o centro para o ChatGPT não censurar):
+- **Pintar:** pinta, com uma cor só (azul forte), o que o ChatGPT não deve ver, para ele aceitar expandir. O pincel vai de 4 até 2000 pixels, com atalhos P, M, G, GG e Enorme e um círculo que mostra o tamanho. Tem **Apagar pintura**, **Desfazer traço** (Ctrl+Z) e **Aplicar pintura**. Depois salve ou mande pela aba ChatGPT.
+- **Colar:** coloca outra imagem por cima da que está aberta. Serve para pôr o original de volta numa expansão do ChatGPT:
   1. Abra a imagem expandida.
   2. Na aba **Colar**, importe o original **do computador**, **da galeria** ou **colando** uma imagem copiada (Ctrl+V).
-  3. Ela já entra no centro, com a altura toda. Ajuste se precisar:
-     - **Encaixes prontos:** Centro com altura toda, Centro com largura toda, Centralizar (sem mudar o tamanho), Tamanho real (1 pixel = 1 pixel) e Cobrir tudo;
-     - **Alinhar:** encostar à esquerda, à direita, em cima ou embaixo, centro na horizontal ou na vertical, espelhar e endireitar;
-     - **Com o mouse:** arraste para mover (gruda no centro e nas bordas; Alt solta o ímã), puxe os cantos para o tamanho e a bolinha de cima para girar (Shift = de 15 em 15°);
-     - **Pelo teclado e pelos controles:** setas movem 1 px (Shift = 10 px); Tamanho e Rotação também têm controle deslizante;
-     - **Ver através:** deixa a imagem colada transparente só para alinhar (o resultado sai sem transparência);
-     - **Bordas suaves:** a beirada da imagem colada se mistura com a de baixo.
-  4. **Aplicar** (Enter) junta as duas em resolução total. **Desfazer** (Ctrl+Z) volta; **Cancelar** (Esc) descarta.
+  3. O **Encaixe automático** roda sozinho em poucos segundos. Ele acha o tamanho, a posição e um leve esticado que o ChatGPT tenha feito, liga "Só a parte pintada" e mostra o resultado.
+  4. **O que colar:**
+     - **Só a parte pintada:** cola só onde a expansão ainda mostra a pintura. Assim, o que o ChatGPT redesenhou em volta fica intacto e não aparece emenda. "Aumentar a área" e "Borda suave da área" ajustam a beirada.
+     - **A imagem toda:** cola o retângulo inteiro (tem "Borda suave da imagem").
+  5. **Ver:**
+     - **Resultado:** a prévia do resultado final. Dá para marcar em vermelho a área colada.
+     - **Imagem:** a imagem por cima, com "Ver através".
+     - **Diferença:** onde encaixa certinho fica preto; contornos coloridos mostram o que ainda está desalinhado.
+  6. **Cores:** **Igualar às cores da imagem de baixo** corrige, região por região, a mudança de cor que o ChatGPT faz, para não aparecer o "quadrado". Também há **Brilho**, **Contraste**, **Saturação** e **Temperatura** à mão.
+  7. **Ajuste manual**, se o automático não ficar perfeito:
+     - **Mover e tamanho:** arraste (gruda no centro e nas bordas; Alt solta o ímã), puxe os cantos para o tamanho e a bolinha para girar. As setas movem 1 px (Shift = 10).
+     - **Proporção:** com o cadeado aberto, largura e altura esticam separadas.
+     - **Perspectiva (cantos):** cada canto arrasta sozinho (Shift = movimento fino). "Tirar a perspectiva" volta ao normal.
+     - **Atalhos de posição:** os encaixes prontos (centro, altura toda, largura toda, tamanho real, cobrir), os botões de alinhar, espelhar e endireitar.
+  8. **Aplicar** (Enter) junta tudo em resolução total. **Desfazer** (Ctrl+Z) volta; **Cancelar** (Esc) descarta.
 
 ## Ajustes
 Iniciar com o Windows, pausar em tela cheia ou atrás de janela maximizada, wallpaper oficial do Windows ao sair, transição padrão e intensidade dos efeitos, transições usadas no modo aleatório, "Reduzir movimento", opções do ChatGPT e **Atalhos**.

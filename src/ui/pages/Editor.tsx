@@ -3,20 +3,21 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   ImagePlus, Undo2, Redo2, Eye, Save, SlidersHorizontal, Crop, Eraser, MessageSquare, WandSparkles, Sparkles, RefreshCcw,
   Bookmark, FolderCog, RotateCw, SquareCenterlineDashedHorizontal, SquareCenterlineDashedVertical, Check, X, Copy, FolderOpen,
-  MonitorUp, ZoomIn, ZoomOut, Maximize, Download, Layers, Images,
+  MonitorUp, ZoomIn, ZoomOut, Maximize, Download, Layers, Images, Brush, Undo, PaintBucket,
 } from 'lucide-react';
 import { api, useStore, mediaUrl, fileName, type MediaItem } from '../api';
 import { Btn, Segmented } from '../components/controls';
 import { GalleryPicker } from '../components/UpscalePicker';
 import { PasteLayerBox, PastePanel, bakeLayer, initialLayer, type Layer } from '../editor/PasteLayer';
+import { PAINT_CSS, defaultOpts, loadPix, toPng, type PasteOpts } from '../editor/composite';
 import { EditorGL, defaultAdjust, clone, autoAdjust, curveAt, CURVE_X, LOOKS, HSL_NAMES, HSL_COLORS, type Adjust, type Crop as CropRect } from '../editor/gl';
 
-type Tool = 'adjust' | 'crop' | 'erase' | 'paste' | 'chatgpt';
+type Tool = 'adjust' | 'crop' | 'erase' | 'paint' | 'paste' | 'chatgpt';
 type CgMode = 'expand' | 'remove' | 'enhance' | 'custom';
 /** One undo step: the working file plus the adjustments on top of it. */
 interface Snapshot { base: string | null; adj: Adjust }
 /** Brush stroke in normalised image coordinates; r = radius relative to the width. */
-interface Stroke { pts: [number, number][]; r: number }
+interface Stroke { pts: [number, number][]; r: number; erase?: boolean }
 
 const NO_CROP: CropRect = { x: 0, y: 0, w: 1, h: 1 };
 const clampTo = (v: number, max: number) => Math.max(0, Math.min(max, v));
@@ -58,8 +59,17 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
   /** "Colar imagem": the picture placed on top, waiting for Aplicar. */
   const [layer, setLayer] = useState<Layer | null>(null);
   const [layerAlpha, setLayerAlpha] = useState(1);
-  const [feather, setFeather] = useState(0);
+  const [pasteOpts, setPasteOpts] = useState<PasteOpts>(defaultOpts());
+  const [pasteMode, setPasteMode] = useState<'move' | 'distort'>('move');
+  const [pasteView, setPasteView] = useState<'box' | 'preview' | 'diff'>('box');
+  const [showMask, setShowMask] = useState(false);
+  const [autoBusy, setAutoBusy] = useState(false);
   const [picker, setPicker] = useState<null | 'open' | 'layer'>(null);
+  /** "Pintar": strokes of solid paint (hide parts before sending to ChatGPT). Size in picture px. */
+  const [paint, setPaint] = useState<Stroke[]>([]);
+  const [paintSize, setPaintSize] = useState(120);
+  const [paintErase, setPaintErase] = useState(false);
+  const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -80,7 +90,7 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
     const best = await api.invoke<string | null>('editor:bestBase', file).catch(() => null);
     setSource(file);
     await loadBase(best || file);
-    setAdj(defaultAdjust()); setUndo([]); setRedo([]); setStrokes([]); setTool('adjust'); setLayer(null);
+    setAdj(defaultAdjust()); setUndo([]); setRedo([]); setStrokes([]); setPaint([]); setTool('adjust'); setLayer(null);
   };
   const loadBase = async (file: string) => {
     const gl = glRef.current;
@@ -97,10 +107,10 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
 
   // Crop and eraser work on the whole (unrotated, for the eraser) image.
   const viewAdj = useMemo(() => {
-    if (tool !== 'crop' && tool !== 'erase' && tool !== 'paste') return adj;
+    if (tool !== 'crop' && tool !== 'erase' && tool !== 'paste' && tool !== 'paint') return adj;
     const a = clone(adj);
     a.crop = { ...NO_CROP };
-    if (tool === 'erase' || tool === 'paste') { a.rotate = 0; a.flipX = false; a.flipY = false; }
+    if (tool === 'erase' || tool === 'paste' || tool === 'paint') { a.rotate = 0; a.flipX = false; a.flipY = false; }
     return a;
   }, [adj, tool]);
 
@@ -169,6 +179,7 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && tool === 'paint' && paint.length && !e.shiftKey) { e.preventDefault(); setPaint((p) => p.slice(0, -1)); return; }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) doRedo(); else doUndo(); }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); doRedo(); }
       if (e.key === '\\' && !(e.target instanceof HTMLInputElement)) setShowBefore((v) => !v);
@@ -271,9 +282,11 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
       const img = new Image();
       img.src = url;
       await img.decode();
-      setLayer(initialLayer(file, url, img.naturalWidth, img.naturalHeight, gl.width, gl.height));
+      const l = initialLayer(file, url, img.naturalWidth, img.naturalHeight, gl.width, gl.height);
+      setLayer(l);
       setLayerAlpha(1);
       setTool('paste');
+      autoFit(l, true);
     } catch (err: any) {
       toast({ kind: 'error', title: 'Não consegui abrir a imagem', message: err.message || String(err) });
     }
@@ -287,11 +300,29 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
     if (f) importLayer(f);
     else toast({ kind: 'info', title: 'Nada copiado', message: 'Copie uma imagem (no ChatGPT, no navegador ou no Explorer) e tente de novo.' });
   };
+  /** Encaixe automático: scale, position, stretch (and the view switches to the result). */
+  const autoFit = async (l: Layer | null = layer, quiet = false) => {
+    if (!l || !base) return;
+    setAutoBusy(true);
+    try {
+      const r = await api.invoke<{ score: number; w: number; sy: number; cx: number; cy: number }>('editor:autoAlign', base, l.path);
+      if (r.score < 0.55) {
+        if (!quiet) toast({ kind: 'warn', title: 'Não achei um encaixe seguro', message: 'As imagens parecem diferentes demais. Ajuste à mão (Diferença ajuda a ver).' });
+        return;
+      }
+      setLayer((cur) => (cur && cur.path === l.path ? { ...cur, w: r.w, sy: r.sy, cx: r.cx, cy: r.cy, rot: 0, corners: [[0, 0], [0, 0], [0, 0], [0, 0]] } : cur));
+      setPasteView('preview');
+      setPasteOpts((o) => ({ ...o, mode: 'paint', match: 1 }));
+      toast({ kind: 'ok', title: 'Encaixado', message: `Confiança ${Math.round(r.score * 100)}%. Confira em "Diferença" e ajuste à mão se precisar.` });
+    } catch (err: any) {
+      if (!quiet) toast({ kind: 'error', title: 'O encaixe automático falhou', message: err.message });
+    } finally { setAutoBusy(false); }
+  };
   const applyLayer = async () => {
     if (!layer || !base) return;
     setBusy('Colando a imagem em resolução total…');
     try {
-      const bytes = await bakeLayer(mediaUrl(base), layer, feather);
+      const bytes = await toPng(await bakeLayer(mediaUrl(base), layer, pasteOpts));
       const out = await api.invoke<string>('editor:writeTemp', bytes);
       commit(adj, out);
       setLayer(null);
@@ -335,6 +366,27 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
     const mask = new Uint8Array(await (await oc.convertToBlob({ type: 'image/png' })).arrayBuffer());
     await runOnBase('Apagando com IA…', () => api.invoke('editor:erase', base, mask));
     setStrokes([]);
+  };
+  /** Pintar: the strokes burnt into the picture at full size (solid colour). */
+  const applyPaint = async () => {
+    if (!base || !paint.length) return;
+    setBusy('Pintando em resolução total…');
+    try {
+      const B = await loadPix(mediaUrl(base));
+      const oc = new OffscreenCanvas(B.w, B.h);
+      const ctx = oc.getContext('2d')!;
+      ctx.putImageData(new ImageData(new Uint8ClampedArray(B.data), B.w, B.h), 0, 0);
+      const pc = new OffscreenCanvas(B.w, B.h);
+      drawStrokes(pc.getContext('2d')!, paint, B.w, B.h, PAINT_CSS);
+      ctx.drawImage(pc, 0, 0);
+      const bytes = new Uint8Array(await (await oc.convertToBlob({ type: 'image/png' })).arrayBuffer());
+      const out = await api.invoke<string>('editor:writeTemp', bytes);
+      commit(adj, out);
+      setPaint([]);
+      toast({ kind: 'ok', title: 'Pintura aplicada', message: 'Salve ou mande pela aba ChatGPT para expandir. Depois, na aba Colar, "Só a parte pintada" reconhece esta cor.' });
+    } catch (err: any) {
+      toast({ kind: 'error', title: 'Não consegui pintar', message: err.message });
+    } finally { setBusy(''); }
   };
   const upscale = () => base && runOnBase('Upscale 4K na GPU…', () => api.invoke('editor:upscale', base));
   const save = async (monitorId?: string) => {
@@ -398,6 +450,10 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
       const r = brush / 2 / ((view.w || 1) * zoom);
       setStrokes((s) => [...s, { pts: [p], r }]);
       drag.current = { mode: 'brush', start: p, crop: cropDraft };
+    } else if (tool === 'paint') {
+      const r = paintSize / 2 / (glRef.current?.width || 1);
+      setPaint((s) => [...s, { pts: [p], r, erase: paintErase }]);
+      drag.current = { mode: 'brush', start: p, crop: cropDraft };
     } else if (tool === 'crop') {
       const c = cropDraft;
       const near = (a: number, b: number) => Math.abs(a - b) < 0.03;
@@ -413,7 +469,8 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
     if (!d) return;
     const p = rel(e);
     if (d.mode === 'brush') {
-      setStrokes((s) => { const c = s.slice(); const last = c[c.length - 1]; last.pts = [...last.pts, p]; return c; });
+      const add = (s: Stroke[]) => { const c = s.slice(); const last = c[c.length - 1]; if (last) last.pts = [...last.pts, p]; return c; };
+      if (tool === 'paint') setPaint(add); else setStrokes(add);
       return;
     }
     const dx = p[0] - d.start[0]; const dy = p[1] - d.start[1];
@@ -454,6 +511,7 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
     cv.width = view.w; cv.height = view.h;
     const ctx = cv.getContext('2d')!;
     ctx.clearRect(0, 0, cv.width, cv.height);
+    if (tool === 'paint') { drawStrokes(ctx, paint, cv.width, cv.height, PAINT_CSS); return; }
     if (tool !== 'erase') return;
     ctx.strokeStyle = 'rgba(255,90,120,.55)'; ctx.fillStyle = 'rgba(255,90,120,.55)'; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     for (const s of strokes) {
@@ -462,7 +520,7 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
       s.pts.forEach(([x, y], i) => (i ? ctx.lineTo(x * cv.width, y * cv.height) : ctx.moveTo(x * cv.width, y * cv.height)));
       if (s.pts.length === 1) { ctx.arc(s.pts[0][0] * cv.width, s.pts[0][1] * cv.height, s.r * cv.width, 0, Math.PI * 2); ctx.fill(); } else ctx.stroke();
     }
-  }, [strokes, view, tool]);
+  }, [strokes, paint, view, tool]);
 
   const monitors = state?.monitors || [];
   const aspects = useMemo(() => [
@@ -531,7 +589,11 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
               cursor: canPan ? 'grab' : undefined,
             }}
             onPointerDown={onDown}
-            onPointerMove={onMove}
+            onPointerMove={(e) => {
+              if (tool === 'paint' || tool === 'erase') { const r = e.currentTarget.getBoundingClientRect(); setCursor({ x: (e.clientX - r.left) / zoom, y: (e.clientY - r.top) / zoom }); }
+              onMove(e);
+            }}
+            onPointerLeave={() => setCursor(null)}
             onPointerUp={onUp}
           >
             <canvas ref={canvasRef} style={{ width: view.w, height: view.h }} />
@@ -542,8 +604,13 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
               </div>
             )}
             {tool === 'paste' && layer && glRef.current && (
-              <PasteLayerBox layer={layer} onChange={(l) => setLayer(l)} bw={glRef.current.width} bh={glRef.current.height} viewW={view.w} viewH={view.h} zoom={zoom} alpha={layerAlpha} feather={feather} />
+              <PasteLayerBox layer={layer} onChange={(l) => setLayer(l)} bw={glRef.current.width} bh={glRef.current.height} viewW={view.w} viewH={view.h} zoom={zoom}
+                alpha={layerAlpha} mode={pasteMode} view={pasteView} opts={pasteOpts} baseUrl={base ? mediaUrl(base) : ''} showMask={showMask} />
             )}
+            {(tool === 'paint' || tool === 'erase') && cursor && (() => {
+              const d = tool === 'paint' ? (paintSize / (glRef.current?.width || 1)) * view.w : brush / zoom;
+              return <div className="brush-cursor" style={{ left: cursor.x, top: cursor.y, width: d, height: d, borderWidth: 1.5 / zoom }} />;
+            })()}
             {tool === 'erase' && <div className="brush-hint">Pinte por cima da marca d'água ou do objeto</div>}
           </div>
           {base && (
@@ -566,7 +633,7 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
 
         <div className="editor-side">
           <div className="tool-tabs">
-            {([['adjust', 'Ajustes', SlidersHorizontal], ['crop', 'Recorte', Crop], ['erase', 'Borracha', Eraser], ['paste', 'Colar', Layers], ['chatgpt', 'ChatGPT', MessageSquare]] as const).map(([id, label, Icon]) => (
+            {([['adjust', 'Ajustes', SlidersHorizontal], ['crop', 'Recorte', Crop], ['erase', 'Borracha', Eraser], ['paint', 'Pintar', Brush], ['paste', 'Colar', Layers], ['chatgpt', 'ChatGPT', MessageSquare]] as const).map(([id, label, Icon]) => (
               <button key={id} className={tool === id ? 'on' : ''} onClick={() => setTool(id)} disabled={!base}>
                 {tool === id && <motion.span layoutId="tooltab" className="seg-pill" transition={{ type: 'spring', stiffness: 500, damping: 38 }} />}
                 <span><Icon size={15} /> {label}</span>
@@ -577,9 +644,33 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
           <div className="editor-scroll">
             {tool === 'paste' && (
               <PastePanel layer={layer} setLayer={setLayer} bw={glRef.current?.width || 1} bh={glRef.current?.height || 1}
-                alpha={layerAlpha} setAlpha={setLayerAlpha} feather={feather} setFeather={setFeather}
+                alpha={layerAlpha} setAlpha={setLayerAlpha} opts={pasteOpts} setOpts={setPasteOpts}
+                mode={pasteMode} setMode={setPasteMode} view={pasteView} setView={setPasteView} showMask={showMask} setShowMask={setShowMask}
                 onImportFile={importLayerFile} onImportGallery={() => setPicker('layer')} onImportClipboard={importLayerClipboard}
+                onAuto={() => autoFit()} autoBusy={autoBusy}
                 onApply={applyLayer} onCancel={() => setLayer(null)} busy={!!busy} />
+            )}
+            {tool === 'paint' && (
+              <Section title="Pintar (esconder do ChatGPT)">
+                <p className="muted small" style={{ marginTop: 0 }}>
+                  Pinte por cima do que o ChatGPT não deve ver, para ele aceitar expandir. A cor é sempre a mesma, então depois, na aba <b>Colar</b>, o app reconhece a área pintada e põe o original de volta só ali.
+                </p>
+                <Segmented value={paintErase ? 'erase' : 'paint'} onChange={(v) => setPaintErase(v === 'erase')} options={[{ value: 'paint', label: 'Pintar' }, { value: 'erase', label: 'Apagar pintura' }]} />
+                <label className="paste-range" style={{ marginTop: 10 }}>
+                  <span className="row" style={{ justifyContent: 'space-between' }}><span>Tamanho do pincel</span><b>{paintSize} px</b></span>
+                  <input type="range" min={0} max={100} step={0.5} value={Math.round((Math.log(paintSize / 4) / Math.log(2000 / 4)) * 1000) / 10}
+                    onChange={(e) => setPaintSize(Math.round(4 * Math.pow(2000 / 4, Number(e.target.value) / 100)))} />
+                </label>
+                <div className="chips" style={{ marginTop: 6 }}>
+                  {[20, 60, 150, 400, 900, 1600].map((n) => <button key={n} className={`chip-t ${paintSize === n ? 'on' : ''}`} onClick={() => setPaintSize(n)}>{n < 100 ? 'P' : n < 300 ? 'M' : n < 800 ? 'G' : n < 1200 ? 'GG' : 'Enorme'} {n}</button>)}
+                </div>
+                <div className="row" style={{ gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                  <Btn className="sm primary" onClick={applyPaint} disabled={!paint.length || !!busy}><PaintBucket size={14} /> Aplicar pintura</Btn>
+                  <Btn className="sm" onClick={() => setPaint((p) => p.slice(0, -1))} disabled={!paint.length}><Undo size={14} /> Desfazer traço</Btn>
+                  <Btn className="sm ghost" onClick={() => setPaint([])} disabled={!paint.length}><X size={14} /> Limpar</Btn>
+                </div>
+                <p className="muted small">O tamanho é em pixels da imagem. Ctrl+Z desfaz o último traço. Depois de aplicar, salve ou mande pela aba ChatGPT.</p>
+              </Section>
             )}
             {tool === 'adjust' && (
               <>
@@ -835,4 +926,18 @@ function CurveEditor({ label, pts, color, on, reset }: { label: string; pts: num
       </svg>
     </div>
   );
+}
+
+/** Brush strokes (normalised) drawn in one colour; "erase" strokes cut the paint away. */
+function drawStrokes(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, strokes: Stroke[], w: number, h: number, color: string) {
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  for (const st of strokes) {
+    ctx.globalCompositeOperation = st.erase ? 'destination-out' : 'source-over';
+    ctx.strokeStyle = color; ctx.fillStyle = color;
+    ctx.lineWidth = st.r * 2 * w;
+    ctx.beginPath();
+    if (st.pts.length === 1) { ctx.arc(st.pts[0][0] * w, st.pts[0][1] * h, st.r * w, 0, Math.PI * 2); ctx.fill(); }
+    else { st.pts.forEach(([x, y], i) => (i ? ctx.lineTo(x * w, y * h) : ctx.moveTo(x * w, y * h))); ctx.stroke(); }
+  }
+  ctx.globalCompositeOperation = 'source-over';
 }
