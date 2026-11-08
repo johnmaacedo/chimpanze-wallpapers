@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   AlignCenterHorizontal, AlignCenterVertical, AlignStartVertical, AlignEndVertical, AlignStartHorizontal, AlignEndHorizontal,
   Crosshair, MoveVertical, MoveHorizontal, Scan, Expand, RotateCcw, Check, X, ImagePlus, Images, ClipboardPaste, FlipHorizontal2,
-  Wand2, Move, Spline, Lock, Unlock, Brush,
+  Wand2, Move, Spline, Lock, Unlock, Brush, Combine,
 } from 'lucide-react';
 import { Btn, Segmented } from '../components/controls';
 import { boxH, composite, cssMatrix, loadPix, quad, NO_CORNERS, type LayerGeom, type PasteOpts, type Pix } from './composite';
@@ -170,6 +170,8 @@ export function PastePanel(p: {
   showMask: boolean; setShowMask: (v: boolean) => void;
   onImportFile: () => void; onImportGallery: () => void; onImportClipboard: () => void; onAuto: () => void; autoBusy: boolean;
   onApply: () => void; onCancel: () => void; busy: boolean;
+  /** "Juntar sem marcas": the layer is the original and the picture below is an expansion of it. */
+  onMerge: () => void;
 }) {
   const { layer, setLayer, bw, bh, opts, setOpts } = p;
   const [lock, setLock] = useState(true);
@@ -180,7 +182,7 @@ export function PastePanel(p: {
   return (
     <div className="paste-panel">
       <p className="small muted" style={{ margin: 0 }}>
-        Coloque outra imagem por cima desta, por exemplo o original de volta numa expansão feita no ChatGPT. O <b>Encaixe automático</b> acha o tamanho, a posição e as cores sozinho.
+        Coloque outra imagem por cima desta. Para pôr o original de volta numa expansão, use <b>Juntar sem marcas</b>: é o mesmo método automático da aba Expandir. O resto (encaixe, máscara, cores) serve para montagens à mão.
       </p>
       <div className="paste-import">
         <Btn className={layer ? 'sm' : 'sm primary'} onClick={p.onImportFile}><ImagePlus size={14} /> Do computador</Btn>
@@ -189,7 +191,12 @@ export function PastePanel(p: {
       </div>
       {layer && px && (
         <>
-          <Btn className="primary" style={{ justifyContent: 'center' }} disabled={p.autoBusy} onClick={p.onAuto}>
+          <Btn className="primary" style={{ justifyContent: 'center' }} disabled={p.busy || p.autoBusy} onClick={p.onMerge}
+            title="A imagem colada é o original e a de baixo é uma expansão dele: o original volta inteiro, na resolução dele, com a emenda escondida.">
+            <Combine size={15} /> Juntar sem marcas (original + expansão)
+          </Btn>
+          <span className="label">Montagem à mão</span>
+          <Btn style={{ justifyContent: 'center' }} disabled={p.autoBusy} onClick={p.onAuto}>
             <Wand2 size={15} className={p.autoBusy ? 'spin' : ''} /> {p.autoBusy ? 'Procurando o encaixe…' : 'Encaixe automático'}
           </Btn>
 

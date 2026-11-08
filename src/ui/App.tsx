@@ -52,6 +52,12 @@ function Shell() {
     }
   }, [state, selected]);
   useEffect(() => { if (newMonitor) { setPage('monitors'); setSelected(newMonitor.id); } }, [newMonitor]);
+  // "Retocar no Editor" (result of an expansion) opens that picture in the Editor.
+  useEffect(() => {
+    const open = (e: Event) => { setEditImage((e as CustomEvent<string>).detail); setPage('editor'); };
+    window.addEventListener('cw-open-editor', open);
+    return () => window.removeEventListener('cw-open-editor', open);
+  }, []);
 
   // Hold "P" (outside text fields) to peek at the wallpaper through the window.
   const opacityRef = useRef(1);

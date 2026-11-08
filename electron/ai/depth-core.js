@@ -897,4 +897,8 @@ function fillFromOutside(src, mask, W, H, ch) {
   return cur;
 }
 
-module.exports = { estimate, release, modelPath, plateFor, exists: () => fs.existsSync(modelPath()) };
+module.exports = {
+  estimate, release, modelPath, plateFor, exists: () => fs.existsSync(modelPath()),
+  // Also used by the local AI expansion (plate-worker.js): people out of the picture first.
+  segment, dilate, boxBlur, fillFromOutside, segModelPath,
+};

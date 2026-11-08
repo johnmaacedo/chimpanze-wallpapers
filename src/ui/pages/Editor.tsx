@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   ImagePlus, Undo2, Redo2, Eye, Save, SlidersHorizontal, Crop, Eraser, MessageSquare, WandSparkles, Sparkles, RefreshCcw,
   Bookmark, FolderCog, RotateCw, SquareCenterlineDashedHorizontal, SquareCenterlineDashedVertical, Check, X, Copy, FolderOpen,
-  MonitorUp, ZoomIn, ZoomOut, Maximize, Download, Layers, Images, Brush, Undo, PaintBucket,
+  MonitorUp, ZoomIn, ZoomOut, Maximize, Download, Layers, Images, Undo, PaintBucket, Expand, TriangleAlert,
 } from 'lucide-react';
 import { api, useStore, mediaUrl, fileName, type MediaItem } from '../api';
 import { Btn, Segmented } from '../components/controls';
@@ -12,8 +12,14 @@ import { PasteLayerBox, PastePanel, bakeLayer, initialLayer, type Layer } from '
 import { PAINT_CSS, defaultOpts, loadPix, toPng, type PasteOpts } from '../editor/composite';
 import { EditorGL, defaultAdjust, clone, autoAdjust, curveAt, CURVE_X, LOOKS, HSL_NAMES, HSL_COLORS, type Adjust, type Crop as CropRect } from '../editor/gl';
 
-type Tool = 'adjust' | 'crop' | 'erase' | 'paint' | 'paste' | 'chatgpt';
-type CgMode = 'expand' | 'remove' | 'enhance' | 'custom';
+type Tool = 'adjust' | 'crop' | 'erase' | 'expand' | 'chatgpt' | 'paste';
+type CgMode = 'remove' | 'enhance' | 'custom';
+/** Who makes the expansion: the local AI (FLUX Fill on the GPU) or the ChatGPT app. */
+type ExpEngine = 'local' | 'chatgpt';
+interface LocalAiStatus {
+  installed: boolean; installing: boolean; running: boolean; busy: boolean;
+  progress?: number; stage?: string; error?: string; sizeGb?: number; missing?: string[];
+}
 /** One undo step: the working file plus the adjustments on top of it. */
 interface Snapshot { base: string | null; adj: Adjust }
 /** Brush stroke in normalised image coordinates; r = radius relative to the width. */
@@ -45,7 +51,18 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
   const [cropDraft, setCropDraft] = useState<CropRect>(adj.crop);
   const [cropAspect, setCropAspectState] = useState<number | null>(null);
   const [expandAspect, setExpandAspect] = useState(16 / 9);
-  const [cgMode, setCgMode] = useState<CgMode>('expand');
+  const [expEngine, setExpEngineState] = useState<ExpEngine>(() => {
+    try { return localStorage.getItem('cw.expEngine') === 'chatgpt' ? 'chatgpt' : 'local'; } catch (_) { return 'local'; }
+  });
+  const setExpEngine = (e: ExpEngine) => { setExpEngineState(e); try { localStorage.setItem('cw.expEngine', e); } catch (_) { /* ignore */ } };
+  const [expPrompt, setExpPrompt] = useState('');
+  const [expPromptEdited, setExpPromptEdited] = useState(false);
+  /** The working picture has "Pintar" paint on it (changes what the ChatGPT request says). */
+  const [hasPaint, setHasPaint] = useState(false);
+  const [localAi, setLocalAi] = useState<LocalAiStatus | null>(null);
+  const [sceneHint, setSceneHint] = useState('');
+  const [localQuality, setLocalQuality] = useState<'fast' | 'best'>('best');
+  const [cgMode, setCgMode] = useState<CgMode>('remove');
   const [removeWhat, setRemoveWhat] = useState('');
   const [customEdit, setCustomEdit] = useState('');
   const [prompt, setPrompt] = useState('');
@@ -70,6 +87,8 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
   const [paintSize, setPaintSize] = useState(120);
   const [paintErase, setPaintErase] = useState(false);
   const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
+  /** The "Pintar" brush is on in Expandir when ChatGPT makes the expansion (it must not see some parts). */
+  const painting = tool === 'expand' && expEngine === 'chatgpt';
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -90,7 +109,7 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
     const best = await api.invoke<string | null>('editor:bestBase', file).catch(() => null);
     setSource(file);
     await loadBase(best || file);
-    setAdj(defaultAdjust()); setUndo([]); setRedo([]); setStrokes([]); setPaint([]); setTool('adjust'); setLayer(null);
+    setAdj(defaultAdjust()); setUndo([]); setRedo([]); setStrokes([]); setPaint([]); setTool('adjust'); setLayer(null); setHasPaint(false);
   };
   const loadBase = async (file: string) => {
     const gl = glRef.current;
@@ -107,10 +126,10 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
 
   // Crop and eraser work on the whole (unrotated, for the eraser) image.
   const viewAdj = useMemo(() => {
-    if (tool !== 'crop' && tool !== 'erase' && tool !== 'paste' && tool !== 'paint') return adj;
+    if (tool !== 'crop' && tool !== 'erase' && tool !== 'paste' && !painting) return adj;
     const a = clone(adj);
     a.crop = { ...NO_CROP };
-    if (tool === 'erase' || tool === 'paste' || tool === 'paint') { a.rotate = 0; a.flipX = false; a.flipY = false; }
+    if (tool === 'erase' || tool === 'paste' || painting) { a.rotate = 0; a.flipX = false; a.flipY = false; }
     return a;
   }, [adj, tool]);
 
@@ -179,7 +198,7 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && tool === 'paint' && paint.length && !e.shiftKey) { e.preventDefault(); setPaint((p) => p.slice(0, -1)); return; }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && painting && paint.length && !e.shiftKey) { e.preventDefault(); setPaint((p) => p.slice(0, -1)); return; }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) doRedo(); else doUndo(); }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); doRedo(); }
       if (e.key === '\\' && !(e.target instanceof HTMLInputElement)) setShowBefore((v) => !v);
@@ -203,39 +222,63 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
   }, []);
   // Checked each time the ChatGPT tab opens, so installing the app is noticed without a restart.
   useEffect(() => {
-    if (tool === 'chatgpt') api.invoke('chatgpt:status').then(setCgStatus).catch(() => {});
+    if (tool === 'chatgpt' || tool === 'expand') api.invoke('chatgpt:status').then(setCgStatus).catch(() => {});
   }, [tool]);
 
-  // --- ChatGPT request -----------------------------------------------------
+  // --- Requests to ChatGPT ---------------------------------------------------
   const aspectLabel = useMemo(() => {
     const mon = state?.monitors.find((m) => Math.abs(m.rect.width / m.rect.height - expandAspect) < 0.001);
     return ({ '1.778': '16:9', '2.333': '21:9', '3.556': '32:9', '0.563': '9:16' } as Record<string, string>)[expandAspect.toFixed(3)]
       || (mon ? `${mon.rect.width}:${mon.rect.height}` : expandAspect.toFixed(2) + ':1');
   }, [expandAspect, state?.monitors]);
+  /** Current picture's proportion (after crop/rotation) and where the expansion adds scenery. */
+  const imgAspect = (() => { const g = glRef.current; if (!g || !g.width) return 0; const o = g.outputSize(adj); return o.w / o.h; })();
+  const expandSides = imgAspect && expandAspect < imgAspect ? 'em cima e embaixo' : 'à esquerda e à direita';
+  const alreadyThere = !!imgAspect && Math.abs(imgAspect - expandAspect) / expandAspect < 0.02;
+  /**
+   * The expansion request, written for how the app works: ChatGPT only adds scenery; the app puts
+   * the untouched original back afterwards (so it must keep scale/position, and the blue paint is
+   * only a placeholder that must not spread into the new areas).
+   */
+  const autoExpandPrompt = useMemo(() => {
+    const lines = [
+      `Expanda esta imagem para o formato ${aspectLabel} (${expandAspect >= 1 ? 'paisagem' : 'retrato'}), para virar papel de parede, acrescentando cenário ${expandSides}.`,
+      '',
+      'Regras importantes:',
+      '1. Não mexa no que já existe: a imagem atual tem que continuar inteira, no mesmo tamanho, na mesma posição (centralizada) e com o mesmo enquadramento. Não aproxime, não afaste, não corte, não gire, não mude a câmera e não redesenhe nada dela.',
+      `2. Só crie as partes novas ${expandSides}, continuando o ambiente de forma natural e coerente: mesma perspectiva e linhas de fuga, mesma altura do horizonte, mesma luz (direção, cor e intensidade), mesmas sombras, mesmas cores, mesmo desfoque de fundo, mesma textura e granulado, e o mesmo estilo visual (render 3D, anime, foto ou pintura, igual ao da imagem). Móveis, paredes, chão e objetos cortados na borda devem continuar com o formato certo.`,
+    ];
+    if (hasPaint) lines.push('3. As áreas pintadas de azul liso são marcações minhas: deixe-as exatamente como estão, em azul liso, sem desenhar nada dentro. Não estenda o azul para as partes novas. Onde o azul encosta na borda, continue nas partes novas apenas o cenário que estaria atrás (parede, móveis, cama, chão), sem pessoas e sem partes de corpo.');
+    lines.push(`${hasPaint ? '4' : '3'}. Não adicione pessoas, animais, textos, logotipos, marcas d'água, molduras, bordas, vinhetas nem faixas pretas.`);
+    lines.push('', `Entregue uma única imagem, exatamente na proporção ${aspectLabel}, na maior resolução possível, sem explicações.`);
+    return lines.join('\n');
+  }, [aspectLabel, expandAspect, expandSides, hasPaint]);
+  useEffect(() => { if (!expPromptEdited) setExpPrompt(autoExpandPrompt); }, [autoExpandPrompt, expPromptEdited]);
   const autoPrompt = useMemo(() => {
-    const keep = "Mantenha todo o resto exatamente igual: pessoas, rostos, corpo, roupas, cores, iluminação e estilo. Não adicione texto, marca d'água nem pessoas novas.";
-    if (cgMode === 'expand') return `Expanda esta imagem para o formato ${aspectLabel} (paisagem, para usar como wallpaper). A imagem original deve continuar intacta no centro; crie apenas a continuação natural do cenário nas áreas novas, coerente com o ambiente, a perspectiva e a luz. ${keep} Gere a imagem final na maior resolução possível, exatamente na proporção ${aspectLabel}.`;
-    if (cgMode === 'remove') return `Remova desta imagem: ${removeWhat.trim() || '[descreva o que remover]'}. Reconstrua o lugar de forma natural, como se aquilo nunca tivesse existido. ${keep} Mantenha o mesmo enquadramento e proporção da imagem.`;
-    if (cgMode === 'enhance') return 'Melhore esta imagem para usar como wallpaper: mais nitidez e definição, cores e iluminação equilibradas, sem ruído, granulado ou artefatos de compressão. Não mude o conteúdo, a pessoa, o rosto nem o enquadramento. Mantenha a mesma proporção.';
-    return `${customEdit.trim() || '[descreva a edição]'} ${keep} Mantenha a mesma proporção da imagem.`;
-  }, [cgMode, aspectLabel, removeWhat, customEdit]);
+    const keep = "Mantenha todo o resto exatamente igual: pessoas, rostos, corpos, roupas, cabelo, cores, luz, sombras, estilo e enquadramento. Não adicione texto, marca d'água, molduras nem pessoas novas.";
+    if (cgMode === 'remove') return `Remova desta imagem: ${removeWhat.trim() || '[descreva o que remover]'}.\nReconstrua o lugar de forma natural, como se aquilo nunca tivesse existido: continue o fundo, as linhas, as texturas e a iluminação ao redor.\n${keep}\nEntregue a imagem com a mesma proporção e o mesmo enquadramento, na maior resolução possível.`;
+    if (cgMode === 'enhance') return 'Melhore esta imagem para usar como papel de parede: mais nitidez e definição nos detalhes, cores e iluminação equilibradas, sem ruído, granulado excessivo, serrilhado ou artefatos de compressão.\nNão mude o conteúdo: mesmas pessoas, mesmos rostos e expressões, mesmas roupas, mesmo cenário e mesmo enquadramento.\nEntregue a imagem com a mesma proporção, na maior resolução possível.';
+    return `${customEdit.trim() || '[descreva a edição]'}\n${keep}\nEntregue a imagem com a mesma proporção, na maior resolução possível.`;
+  }, [cgMode, removeWhat, customEdit]);
   useEffect(() => { if (!promptEdited) setPrompt(autoPrompt); }, [autoPrompt, promptEdited]);
 
   const exportTemp = async () => {
     const bytes = await glRef.current!.exportPng(adj);
     return api.invoke<string>('editor:writeTemp', bytes);
   };
-  const sendToChatGpt = async () => {
+  /** `expand`: the Expandir flow (its request and proportion); otherwise the "Editar com IA" tab. */
+  const sendToChatGpt = async (expand: boolean) => {
     if (!base || !source) return;
+    if (paint.length) { toast({ kind: 'warn', title: 'Falta aplicar a pintura', message: 'Clique em "Aplicar pintura" antes de enviar (senão o ChatGPT vê a imagem sem ela).' }); return; }
     setBusy('Preparando a imagem…');
     try {
       const file = await exportTemp();
       setSentImage(file);
       setBusy('');
       const r = await api.invoke('chatgpt:send', {
-        image: file, source, prompt,
-        aspect: cgMode === 'expand' ? expandAspect : 0,
-        label: cgMode === 'expand' ? `Expandir ${aspectLabel}` : cgMode === 'remove' ? 'Remover objeto' : cgMode === 'enhance' ? 'Melhorar' : 'Edição',
+        image: file, source, prompt: expand ? expPrompt : prompt,
+        aspect: expand ? expandAspect : 0,
+        label: expand ? `Expandir ${aspectLabel}` : cgMode === 'remove' ? 'Remover objeto' : cgMode === 'enhance' ? 'Melhorar' : 'Edição',
       });
       if (r && r.notInstalled) {
         setCgStatus((s) => ({ ...s, installed: false }));
@@ -247,9 +290,33 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
       toast({ kind: 'error', title: 'ChatGPT', message: err.message });
     } finally { setBusy(''); }
   };
-  const pickChatGptFile = async () => {
+  const pickChatGptFile = async (expand: boolean) => {
     const r = await api.invoke('chatgpt:pickFile');
-    if (r && source) window.dispatchEvent(new CustomEvent('chatgpt-manual', { detail: { ...r, source, aspect: cgMode === 'expand' ? expandAspect : 0 } }));
+    if (r && source) window.dispatchEvent(new CustomEvent('chatgpt-manual', { detail: { ...r, source, aspect: expand ? expandAspect : 0, label: expand ? `Expandir ${aspectLabel}` : '' } }));
+  };
+
+  // --- Local AI expansion (FLUX Fill on the GPU, through the app's own ComfyUI) --------------
+  useEffect(() => api.on('localai:status', (st: LocalAiStatus) => setLocalAi(st)), []);
+  useEffect(() => { if (tool === 'expand') api.invoke<LocalAiStatus>('localai:status').then(setLocalAi).catch(() => {}); }, [tool]);
+  const installLocal = async () => {
+    try { await api.invoke('localai:install'); } catch (err: any) {
+      toast({ kind: 'error', title: 'Não consegui preparar a IA local', message: String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') });
+    }
+  };
+  const expandLocal = async () => {
+    if (!base || !source) return;
+    if (alreadyThere) { toast({ kind: 'info', title: 'Já está nessa proporção', message: `A imagem já é ${aspectLabel}. Escolha outro formato.` }); return; }
+    setBusy('Preparando a imagem…');
+    try {
+      const file = await exportTemp();
+      setBusy('');
+      const r = await api.invoke<{ file: string; width: number; height: number; place: { x: number; y: number; w: number; h: number }; warning: string }>('localai:expand', { image: file, aspect: expandAspect, quality: localQuality, hint: sceneHint.trim() });
+      // `original`: the exact picture that was expanded (with crop/adjustments), joined back 1:1 at `place`.
+      window.dispatchEvent(new CustomEvent('chatgpt-manual', { detail: { ...r, via: 'local', source, original: file, aspect: expandAspect, label: `Expandir ${aspectLabel}` } }));
+    } catch (err: any) {
+      const msg = String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+      if (!/cancelad/i.test(msg)) toast({ kind: 'error', title: 'A IA local não conseguiu expandir', message: msg });
+    } finally { setBusy(''); }
   };
 
   // --- Zoom / pan of the preview --------------------------------------------
@@ -312,11 +379,24 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
       }
       setLayer((cur) => (cur && cur.path === l.path ? { ...cur, w: r.w, sy: r.sy, cx: r.cx, cy: r.cy, rot: 0, corners: [[0, 0], [0, 0], [0, 0], [0, 0]] } : cur));
       setPasteView('preview');
-      setPasteOpts((o) => ({ ...o, mode: 'paint', match: 1 }));
+      setPasteOpts((o) => ({ ...o, mode: 'all', match: 1, feather: Math.max(o.feather, 24) }));
       toast({ kind: 'ok', title: 'Encaixado', message: `Confiança ${Math.round(r.score * 100)}%. Confira em "Diferença" e ajuste à mão se precisar.` });
     } catch (err: any) {
       if (!quiet) toast({ kind: 'error', title: 'O encaixe automático falhou', message: err.message });
     } finally { setAutoBusy(false); }
+  };
+  /** "Juntar sem marcas": the pasted picture is the original, the open one an expansion of it (merge-core.js). */
+  const mergeLayer = async () => {
+    if (!layer || !base) return;
+    setBusy('Juntando o original com a expansão…');
+    try {
+      const r = await api.invoke<{ file: string; width: number; height: number; warnings: string[] }>('expand:merge', { source: layer.path, expansion: base, aspect: 0 });
+      commit(adj, r.file);
+      setLayer(null);
+      toast({ kind: 'ok', title: 'Juntado sem marcas', message: `${r.width}×${r.height}. ${r.warnings.join(' ')} Use Desfazer (Ctrl+Z) para voltar.`.trim() });
+    } catch (err: any) {
+      toast({ kind: 'error', title: 'Não consegui juntar', message: String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') });
+    } finally { setBusy(''); }
   };
   const applyLayer = async () => {
     if (!layer || !base) return;
@@ -383,7 +463,8 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
       const out = await api.invoke<string>('editor:writeTemp', bytes);
       commit(adj, out);
       setPaint([]);
-      toast({ kind: 'ok', title: 'Pintura aplicada', message: 'Salve ou mande pela aba ChatGPT para expandir. Depois, na aba Colar, "Só a parte pintada" reconhece esta cor.' });
+      setHasPaint(true);
+      toast({ kind: 'ok', title: 'Pintura aplicada', message: 'Agora é só enviar para o ChatGPT. Quando a imagem voltar, o app põe o original de volta sozinho.' });
     } catch (err: any) {
       toast({ kind: 'error', title: 'Não consegui pintar', message: err.message });
     } finally { setBusy(''); }
@@ -451,7 +532,7 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
       const r = brush / 2 / ((view.w || 1) * zoom);
       setStrokes((s) => [...s, { pts: [p], r }]);
       drag.current = { mode: 'brush', start: p, crop: cropDraft };
-    } else if (tool === 'paint') {
+    } else if (painting) {
       const r = paintSize / 2 / (glRef.current?.width || 1);
       setPaint((s) => [...s, { pts: [p], r, erase: paintErase }]);
       drag.current = { mode: 'brush', start: p, crop: cropDraft };
@@ -471,7 +552,7 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
     const p = rel(e);
     if (d.mode === 'brush') {
       const add = (s: Stroke[]) => { const c = s.slice(); const last = c[c.length - 1]; if (last) last.pts = [...last.pts, p]; return c; };
-      if (tool === 'paint') setPaint(add); else setStrokes(add);
+      if (painting) setPaint(add); else setStrokes(add);
       return;
     }
     const dx = p[0] - d.start[0]; const dy = p[1] - d.start[1];
@@ -512,7 +593,7 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
     cv.width = view.w; cv.height = view.h;
     const ctx = cv.getContext('2d')!;
     ctx.clearRect(0, 0, cv.width, cv.height);
-    if (tool === 'paint') { drawStrokes(ctx, paint, cv.width, cv.height, PAINT_CSS); return; }
+    if (painting) { drawStrokes(ctx, paint, cv.width, cv.height, PAINT_CSS); return; }
     if (tool !== 'erase') return;
     ctx.strokeStyle = 'rgba(255,90,120,.55)'; ctx.fillStyle = 'rgba(255,90,120,.55)'; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     for (const s of strokes) {
@@ -528,6 +609,21 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
     ...monitors.map((m) => ({ label: `Monitor ${m.index} (${m.rect.width}×${m.rect.height})`, v: m.rect.width / m.rect.height })),
     { label: '16:9', v: 16 / 9 }, { label: '21:9', v: 21 / 9 }, { label: '32:9', v: 32 / 9 }, { label: '9:16', v: 9 / 16 },
   ], [monitors]);
+  /** Wallpaper formats for Expandir: one chip per proportion, naming the monitors that use it. */
+  const expandChips = useMemo(() => {
+    const named: Record<string, string> = { '1.778': '16:9', '2.333': '21:9', '3.556': '32:9', '1.600': '16:10' };
+    const map = new Map<string, { v: number; mons: number[] }>();
+    for (const m of monitors) {
+      const v = m.rect.width / m.rect.height; const k = v.toFixed(3);
+      if (v <= 1) continue;
+      const e = map.get(k) || { v, mons: [] }; e.mons.push(m.index); map.set(k, e);
+    }
+    for (const v of [16 / 9, 21 / 9, 32 / 9]) { const k = v.toFixed(3); if (!map.has(k)) map.set(k, { v, mons: [] }); }
+    return [...map.entries()].map(([k, e]) => ({
+      v: e.v,
+      label: (named[k] || `${e.v.toFixed(2)}:1`) + (e.mons.length ? ` · monitor${e.mons.length > 1 ? 'es' : ''} ${e.mons.join(' e ')}` : ''),
+    }));
+  }, [monitors]);
   const outSize = glRef.current && glRef.current.width ? glRef.current.outputSize(adj) : null;
 
   return (
@@ -591,7 +687,7 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
             }}
             onPointerDown={onDown}
             onPointerMove={(e) => {
-              if (tool === 'paint' || tool === 'erase') { const r = e.currentTarget.getBoundingClientRect(); setCursor({ x: (e.clientX - r.left) / zoom, y: (e.clientY - r.top) / zoom }); }
+              if (painting || tool === 'erase') { const r = e.currentTarget.getBoundingClientRect(); setCursor({ x: (e.clientX - r.left) / zoom, y: (e.clientY - r.top) / zoom }); }
               onMove(e);
             }}
             onPointerLeave={() => setCursor(null)}
@@ -608,8 +704,8 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
               <PasteLayerBox layer={layer} onChange={(l) => setLayer(l)} bw={glRef.current.width} bh={glRef.current.height} viewW={view.w} viewH={view.h} zoom={zoom}
                 alpha={layerAlpha} mode={pasteMode} view={pasteView} opts={pasteOpts} baseUrl={base ? mediaUrl(base) : ''} showMask={showMask} />
             )}
-            {(tool === 'paint' || tool === 'erase') && cursor && (() => {
-              const d = tool === 'paint' ? (paintSize / (glRef.current?.width || 1)) * view.w : brush / zoom;
+            {(painting || tool === 'erase') && cursor && (() => {
+              const d = painting ? (paintSize / (glRef.current?.width || 1)) * view.w : brush / zoom;
               return <div className="brush-cursor" style={{ left: cursor.x, top: cursor.y, width: d, height: d, borderWidth: 1.5 / zoom }} />;
             })()}
             {tool === 'erase' && <div className="brush-hint">Pinte por cima da marca d'água ou do objeto</div>}
@@ -633,12 +729,22 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
         </div>
 
         <div className="editor-side">
-          <div className="tool-tabs">
-            {([['adjust', 'Ajustes', SlidersHorizontal], ['crop', 'Recorte', Crop], ['erase', 'Borracha', Eraser], ['paint', 'Pintar', Brush], ['paste', 'Colar', Layers], ['chatgpt', 'ChatGPT', MessageSquare]] as const).map(([id, label, Icon]) => (
-              <button key={id} className={tool === id ? 'on' : ''} onClick={() => setTool(id)} disabled={!base}>
-                {tool === id && <motion.span layoutId="tooltab" className="seg-pill" transition={{ type: 'spring', stiffness: 500, damping: 38 }} />}
-                <span><Icon size={15} /> {label}</span>
-              </button>
+          <div className="tool-groups">
+            {([
+              ['Imagem', [['adjust', 'Ajustes', SlidersHorizontal], ['crop', 'Recorte', Crop], ['erase', 'Borracha', Eraser]]],
+              ['Wallpaper com IA', [['expand', 'Expandir', Expand], ['chatgpt', 'Editar IA', WandSparkles], ['paste', 'Colar', Layers]]],
+            ] as const).map(([group, items]) => (
+              <div key={group} className="tool-group">
+                <span className="tool-group-title">{group}</span>
+                <div className="tool-tabs">
+                  {items.map(([id, label, Icon]) => (
+                    <button key={id} className={tool === id ? 'on' : ''} onClick={() => setTool(id)} disabled={!base}>
+                      {tool === id && <motion.span layoutId="tooltab" className="seg-pill" transition={{ type: 'spring', stiffness: 500, damping: 38 }} />}
+                      <span><Icon size={15} /> {label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
 
@@ -649,29 +755,117 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
                 mode={pasteMode} setMode={setPasteMode} view={pasteView} setView={setPasteView} showMask={showMask} setShowMask={setShowMask}
                 onImportFile={importLayerFile} onImportGallery={() => setPicker('layer')} onImportClipboard={importLayerClipboard}
                 onAuto={() => autoFit()} autoBusy={autoBusy}
-                onApply={applyLayer} onCancel={() => setLayer(null)} busy={!!busy} />
+                onApply={applyLayer} onCancel={() => setLayer(null)} busy={!!busy} onMerge={mergeLayer} />
             )}
-            {tool === 'paint' && (
-              <Section title="Pintar (esconder do ChatGPT)">
-                <p className="muted small" style={{ marginTop: 0 }}>
-                  Pinte por cima do que o ChatGPT não deve ver, para ele aceitar expandir. A cor é sempre a mesma, então depois, na aba <b>Colar</b>, o app reconhece a área pintada e põe o original de volta só ali.
+            {tool === 'expand' && (
+              <div className="steps">
+                <p className="muted small" style={{ margin: 0 }}>
+                  Transforma a imagem num wallpaper do formato do monitor, criando cenário novo em volta. O original nunca é redesenhado: no fim, o app põe ele de volta inteiro.
                 </p>
-                <Segmented value={paintErase ? 'erase' : 'paint'} onChange={(v) => setPaintErase(v === 'erase')} options={[{ value: 'paint', label: 'Pintar' }, { value: 'erase', label: 'Apagar pintura' }]} />
-                <label className="paste-range" style={{ marginTop: 10 }}>
-                  <span className="row" style={{ justifyContent: 'space-between' }}><span>Tamanho do pincel</span><b>{paintSize} px</b></span>
-                  <input type="range" min={0} max={100} step={0.5} value={Math.round((Math.log(paintSize / 4) / Math.log(2000 / 4)) * 1000) / 10}
-                    onChange={(e) => setPaintSize(Math.round(4 * Math.pow(2000 / 4, Number(e.target.value) / 100)))} />
-                </label>
-                <div className="chips" style={{ marginTop: 6 }}>
-                  {[20, 60, 150, 400, 900, 1600].map((n) => <button key={n} className={`chip-t ${paintSize === n ? 'on' : ''}`} onClick={() => setPaintSize(n)}>{n < 100 ? 'P' : n < 300 ? 'M' : n < 800 ? 'G' : n < 1200 ? 'GG' : 'Enorme'} {n}</button>)}
-                </div>
-                <div className="row" style={{ gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-                  <Btn className="sm primary" onClick={applyPaint} disabled={!paint.length || !!busy}><PaintBucket size={14} /> Aplicar pintura</Btn>
-                  <Btn className="sm" onClick={() => setPaint((p) => p.slice(0, -1))} disabled={!paint.length}><Undo size={14} /> Desfazer traço</Btn>
-                  <Btn className="sm ghost" onClick={() => setPaint([])} disabled={!paint.length}><X size={14} /> Limpar</Btn>
-                </div>
-                <p className="muted small">O tamanho é em pixels da imagem. Ctrl+Z desfaz o último traço. Depois de aplicar, salve ou mande pela aba ChatGPT.</p>
-              </Section>
+
+                <Step n={1} title="Formato do wallpaper">
+                  <div className="chips">
+                    {expandChips.map((a) => (
+                      <button key={a.label} className={`chip-t ${Math.abs(expandAspect - a.v) < 0.001 ? 'on' : ''}`} onClick={() => setExpandAspect(a.v)}>{a.label}</button>
+                    ))}
+                  </div>
+                  <span className="muted small">
+                    {alreadyThere ? `A imagem já está em ${aspectLabel}: escolha outro formato.` : `Vai ganhar cenário ${expandSides} até ficar ${aspectLabel}.`}
+                  </span>
+                </Step>
+
+                <Step n={2} title="Quem cria o cenário novo">
+                  <Segmented value={expEngine} onChange={setExpEngine}
+                    options={[{ value: 'local', label: 'IA local (no PC)' }, { value: 'chatgpt', label: 'ChatGPT' }]} />
+                  {expEngine === 'local' ? (
+                    <div className="stack" style={{ gap: 8 }}>
+                      <span className="muted small">FLUX Fill rodando na sua placa de vídeo: sem censura, sem internet e sem precisar esconder nada. Leva cerca de 1 a 2 minutos.</span>
+                      {localAi && !localAi.installed && (
+                        <div className="cg-missing">
+                          <b className="small">{localAi.installing ? 'Preparando a IA local…' : 'A IA local ainda não está instalada'}</b>
+                          {localAi.installing
+                            ? <ProgressLine stage={localAi.stage} value={localAi.progress} />
+                            : <span className="muted small">É um download único de cerca de {localAi.sizeGb || 18} GB (modelo FLUX Fill e o motor ComfyUI). Depois funciona offline.</span>}
+                          {localAi.error && <span className="merge-warn small"><TriangleAlert size={12} /> {localAi.error}</span>}
+                          {!localAi.installing && <Btn className="sm primary" onClick={installLocal}><Download size={13} /> Baixar e preparar</Btn>}
+                        </div>
+                      )}
+                      {localAi?.installed && (
+                        <>
+                          <label className="stack" style={{ gap: 4 }}>
+                            <span className="small muted">Descrição do cenário (opcional, ajuda em cenas difíceis)</span>
+                            <input className="input" placeholder="ex.: quarto aconchegante com abajures e quadros" value={sceneHint} onChange={(e) => setSceneHint(e.target.value)} />
+                          </label>
+                          <Segmented value={localQuality} onChange={setLocalQuality} options={[{ value: 'best', label: 'Melhor qualidade' }, { value: 'fast', label: 'Mais rápido' }]} />
+                          {localAi.busy
+                            ? (
+                              <div className="cg-wait">
+                                <ProgressLine stage={localAi.stage} value={localAi.progress} />
+                                <Btn className="sm ghost" onClick={() => api.invoke('localai:cancel')}><X size={13} /> Parar</Btn>
+                              </div>
+                            )
+                            : <Btn className="sm primary" onClick={expandLocal} disabled={!base || !!busy || alreadyThere}><Sparkles size={14} /> Expandir no PC</Btn>}
+                          {localAi.error && !localAi.busy && <span className="merge-warn small"><TriangleAlert size={12} /> {localAi.error}</span>}
+                        </>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="stack" style={{ gap: 8 }}>
+                      <span className="muted small"><b>a)</b> Pinte por cima do que o ChatGPT não deve ver (ele recusa conteúdo sensível). Evite encostar a pintura na borda da imagem, quando der.</span>
+                      <Segmented value={paintErase ? 'erase' : 'paint'} onChange={(v) => setPaintErase(v === 'erase')} options={[{ value: 'paint', label: 'Pintar' }, { value: 'erase', label: 'Apagar pintura' }]} />
+                      <label className="paste-range">
+                        <span className="row" style={{ justifyContent: 'space-between' }}><span>Tamanho do pincel</span><b>{paintSize} px</b></span>
+                        <input type="range" min={0} max={100} step={0.5} value={Math.round((Math.log(paintSize / 4) / Math.log(2000 / 4)) * 1000) / 10}
+                          onChange={(e) => setPaintSize(Math.round(4 * Math.pow(2000 / 4, Number(e.target.value) / 100)))} />
+                      </label>
+                      <div className="chips">
+                        {[20, 60, 150, 400, 900, 1600].map((n) => <button key={n} className={`chip-t ${paintSize === n ? 'on' : ''}`} onClick={() => setPaintSize(n)}>{n < 100 ? 'P' : n < 300 ? 'M' : n < 800 ? 'G' : n < 1200 ? 'GG' : 'Enorme'} {n}</button>)}
+                      </div>
+                      <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                        <Btn className="sm primary" onClick={applyPaint} disabled={!paint.length || !!busy}><PaintBucket size={14} /> Aplicar pintura</Btn>
+                        <Btn className="sm" onClick={() => setPaint((p) => p.slice(0, -1))} disabled={!paint.length}><Undo size={14} /> Desfazer traço</Btn>
+                        <Btn className="sm ghost" onClick={() => setPaint([])} disabled={!paint.length}><X size={14} /> Limpar</Btn>
+                      </div>
+                      {hasPaint && <span className="muted small"><Check size={12} style={{ verticalAlign: -2 }} /> Pintura aplicada (Ctrl+Z desfaz).</span>}
+                      <span className="muted small"><b>b)</b> Envie. O app abre o ChatGPT, cola a imagem e o pedido e envia sozinho.</span>
+                      {cgStatus.installed === false && (
+                        <div className="cg-missing">
+                          <b className="small">É necessário instalar o aplicativo do ChatGPT</b>
+                          <span className="muted small">Instale pela Microsoft Store, entre na sua conta e volte aqui.</span>
+                          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                            <Btn className="sm primary" onClick={() => api.invoke('chatgpt:store')}><Download size={13} /> Instalar o ChatGPT</Btn>
+                            <Btn className="sm ghost" onClick={() => api.invoke('chatgpt:status').then(setCgStatus)}><RefreshCcw size={13} /> Já instalei</Btn>
+                          </div>
+                        </div>
+                      )}
+                      <Btn className="sm primary" onClick={() => sendToChatGpt(true)} disabled={!base || !!busy || cgStatus.installed === false || alreadyThere}><MessageSquare size={14} /> Enviar para o ChatGPT</Btn>
+                      <details className="prompt-box">
+                        <summary className="small">Ver ou editar o pedido</summary>
+                        <textarea className="input" value={expPrompt} onChange={(e) => { setExpPrompt(e.target.value); setExpPromptEdited(true); }} />
+                        {expPromptEdited && <button className="small muted" onClick={() => setExpPromptEdited(false)}>↺ voltar ao pedido automático</button>}
+                      </details>
+                      {cgStatus.waiting && (
+                        <div className="cg-wait">
+                          <b className="small">Aguardando a imagem do ChatGPT…</b>
+                          <span className="muted small">{cgStatus.stage}</span>
+                          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                            <Btn className="sm ghost" onClick={() => sentImage && api.invoke('chatgpt:copyImage', sentImage)}><Copy size={13} /> Copiar imagem</Btn>
+                            <Btn className="sm ghost" onClick={() => api.invoke('chatgpt:copyText', expPrompt)}><Copy size={13} /> Copiar pedido</Btn>
+                            <Btn className="sm ghost" onClick={() => api.invoke('chatgpt:cancel')}><X size={13} /> Parar</Btn>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </Step>
+
+                <Step n={3} title="Juntar com o original (automático)">
+                  <span className="muted small">
+                    Quando a imagem expandida chegar, o app encaixa o original de volta inteiro, na resolução dele, iguala as cores e esconde a emenda. Você confere numa comparação e salva.
+                  </span>
+                  <Btn className="sm ghost" onClick={() => pickChatGptFile(true)} disabled={!source}><FolderOpen size={13} /> Já tenho a imagem expandida: escolher</Btn>
+                </Step>
+              </div>
             )}
             {tool === 'adjust' && (
               <>
@@ -778,17 +972,10 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
             {tool === 'chatgpt' && (
               <Section title="Editar com o ChatGPT">
                 <p className="muted small" style={{ marginTop: 0 }}>
-                  Usa o aplicativo do ChatGPT instalado no seu PC (sua conta, suas gerações grátis). O app copia a imagem, abre o ChatGPT, cola tudo e envia. Quando a imagem nova ficar pronta, é só <b>baixar</b> ou <b>copiar</b> ela no ChatGPT: o Chimpanzé pega sozinho.
+                  Remover objetos, melhorar a imagem ou uma edição livre pelo aplicativo do ChatGPT do seu PC. Para virar wallpaper (mais largo), use a aba <b>Expandir</b>. Quando a imagem nova ficar pronta, é só <b>baixar</b> ou <b>copiar</b> no ChatGPT: o Chimpanzé pega sozinho.
                 </p>
                 <Segmented value={cgMode} onChange={(v) => { setCgMode(v); setPromptEdited(false); }}
-                  options={[{ value: 'expand', label: 'Expandir' }, { value: 'remove', label: 'Remover' }, { value: 'enhance', label: 'Melhorar' }, { value: 'custom', label: 'Livre' }]} />
-                {cgMode === 'expand' && (
-                  <div className="chips">
-                    {aspects.filter((a) => a.v > 1).map((a) => (
-                      <button key={a.label} className={`chip-t ${Math.abs(expandAspect - a.v) < 0.001 ? 'on' : ''}`} onClick={() => { setExpandAspect(a.v); setPromptEdited(false); }}>{a.label}</button>
-                    ))}
-                  </div>
-                )}
+                  options={[{ value: 'remove', label: 'Remover' }, { value: 'enhance', label: 'Melhorar' }, { value: 'custom', label: 'Livre' }]} />
                 {cgMode === 'remove' && (
                   <input className="input" placeholder="O que remover? ex.: a pessoa ao fundo, o texto no canto" value={removeWhat} onChange={(e) => { setRemoveWhat(e.target.value); setPromptEdited(false); }} />
                 )}
@@ -809,7 +996,7 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
                   </div>
                 )}
                 <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                  <Btn className="sm primary" onClick={sendToChatGpt} disabled={!base || !!busy || cgStatus.installed === false}><MessageSquare size={14} /> Enviar para o ChatGPT</Btn>
+                  <Btn className="sm primary" onClick={() => sendToChatGpt(false)} disabled={!base || !!busy || cgStatus.installed === false}><MessageSquare size={14} /> Enviar para o ChatGPT</Btn>
                 </div>
                 {cgStatus.waiting && (
                   <div className="cg-wait">
@@ -822,12 +1009,7 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
                     </div>
                   </div>
                 )}
-                <Btn className="sm ghost" onClick={pickChatGptFile} disabled={!source}><FolderOpen size={13} /> Já baixei: escolher o arquivo</Btn>
-                {cgMode === 'expand' && (
-                  <p className="muted small" style={{ margin: 0 }}>
-                    O ChatGPT costuma entregar até ~1536 px de largura e às vezes perto (não exatamente) da proporção pedida. Na hora de salvar, o app corta para {aspectLabel} e pode fazer o upscale 4K.
-                  </p>
-                )}
+                <Btn className="sm ghost" onClick={() => pickChatGptFile(false)} disabled={!source}><FolderOpen size={13} /> Já baixei: escolher o arquivo</Btn>
               </Section>
             )}
           </div>
@@ -851,6 +1033,26 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
             onPick={([p]) => { const which = picker; setPicker(null); if (p) { if (which === 'open') open(p); else importLayer(p); } }} />
         )}
       </AnimatePresence>
+    </div>
+  );
+}
+
+/** Numbered step of a guided flow (Expandir). */
+function Step({ n, title, children }: { n: number; title: string; children: ReactNode }) {
+  return (
+    <div className="step">
+      <div className="step-head"><span className="step-n">{n}</span><b>{title}</b></div>
+      <div className="step-body">{children}</div>
+    </div>
+  );
+}
+
+/** Stage text + progress bar (value 0..1, or undefined = working). */
+function ProgressLine({ stage, value }: { stage?: string; value?: number }) {
+  return (
+    <div className="stack" style={{ gap: 6 }}>
+      <span className="muted small">{stage || 'Trabalhando…'}{value != null ? ` ${Math.round(value * 100)}%` : ''}</span>
+      <div className="pbar"><i style={{ width: value != null ? `${Math.max(2, value * 100)}%` : '35%' }} className={value == null ? 'indet' : ''} /></div>
     </div>
   );
 }

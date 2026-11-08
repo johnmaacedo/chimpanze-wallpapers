@@ -30,14 +30,21 @@ Veja os wallpapers das pastas do app, aplique em qualquer monitor, compare antes
 3. Acompanhe na **Fila**. O original nunca muda: a versão nova vai para a subpasta `_4K` e passa a ser usada nos monitores.
 
 ## Editor
-Ajustes (exposição, contraste, cor, nitidez…), recorte, **borracha** de marca d'água por IA e **edição pelo ChatGPT** (Expandir para o formato do monitor, Remover objeto, Melhorar, Livre). Essa última exige o app do ChatGPT instalado; o Chimpanzé cola a imagem e o pedido e pega o resultado quando você baixar ou copiar a imagem.
+As ferramentas ficam em dois grupos:
+- **Imagem:** **Ajustes** (exposição, contraste, cor, nitidez…), **Recorte** e **Borracha** (apaga marca d'água com IA, offline).
+- **Wallpaper com IA:** **Expandir**, **Editar IA** (remover objeto, melhorar ou edição livre pelo ChatGPT) e **Colar** (montagem à mão).
 
 - **Abrir:** do computador (**Abrir**) ou da galeria do app (**Da galeria**).
-- **Pintar:** pinta, com uma cor só (azul forte), o que o ChatGPT não deve ver, para ele aceitar expandir. O pincel vai de 4 até 2000 pixels, com atalhos P, M, G, GG e Enorme e um círculo que mostra o tamanho. Tem **Apagar pintura**, **Desfazer traço** (Ctrl+Z) e **Aplicar pintura**. Depois salve ou mande pela aba ChatGPT.
-- **Colar:** coloca outra imagem por cima da que está aberta. Serve para pôr o original de volta numa expansão do ChatGPT:
+- **Expandir** (transforma a imagem num wallpaper do formato do monitor), em 3 etapas:
+  1. **Formato:** 16:9, 21:9, 32:9 ou o formato de cada monitor (monitores iguais aparecem num botão só).
+  2. **Quem cria o cenário novo:**
+     - **IA local (no PC):** FLUX Fill na sua placa NVIDIA, sem internet e sem precisar esconder nada. Na primeira vez, **Baixar e preparar** baixa cerca de 18 GB (fica em `%LOCALAPPDATA%\ChimpanzeWallpapers\localai`; o download continua de onde parou). Dá para escrever uma descrição do cenário (opcional) e escolher **Melhor qualidade** ou **Mais rápido**. O motor só fica ligado enquanto é usado.
+     - **ChatGPT:** pinte (azul forte, pincel de 4 a 2000 px) o que ele não deve ver, clique em **Aplicar pintura** e em **Enviar para o ChatGPT**. O pedido é montado sozinho (dá para ver e editar). Se esquecer de aplicar a pintura, o app avisa antes de enviar.
+  3. **Juntar com o original (automático):** quando a imagem expandida chega, o app põe o original de volta inteiro, na resolução dele (até 4K), iguala as cores e esconde a emenda na borda. Aparece uma comparação (arraste a barra) entre o resultado juntado e o que a IA entregou; salve com ou sem upscale 4K, ou **Retocar no Editor**. Se a IA mudou demais a cena, o app avisa em vez de montar errado. Tinta azul que o ChatGPT tenha levado para as partes novas é apagada com IA.
+- **Colar:** coloca outra imagem por cima da que está aberta. Para pôr o original de volta numa expansão, use **Juntar sem marcas** (o mesmo método automático do Expandir). O resto serve para montagens à mão:
   1. Abra a imagem expandida.
   2. Na aba **Colar**, importe o original **do computador**, **da galeria** ou **colando** uma imagem copiada (Ctrl+V).
-  3. O **Encaixe automático** roda sozinho em poucos segundos. Ele acha o tamanho, a posição e um leve esticado que o ChatGPT tenha feito, liga "Só a parte pintada" e mostra o resultado.
+  3. O **Encaixe automático** roda sozinho em poucos segundos. Ele acha o tamanho, a posição e um leve esticado que o ChatGPT tenha feito, e mostra o resultado.
   4. **O que colar:**
      - **Só a parte pintada:** cola só onde a expansão ainda mostra a pintura. Assim, o que o ChatGPT redesenhou em volta fica intacto e não aparece emenda. "Limpar restos de tinta em volta" pega o contorno fraco de tinta que o ChatGPT deixa na borda da pintura; "Aumentar a área" e "Borda suave da área" ajustam a beirada.
      - **A imagem toda:** cola o retângulo inteiro (tem "Borda suave da imagem").
