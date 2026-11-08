@@ -3,13 +3,15 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   ImagePlus, Undo2, Redo2, Eye, Save, SlidersHorizontal, Crop, Eraser, MessageSquare, WandSparkles, Sparkles, RefreshCcw,
   Bookmark, FolderCog, RotateCw, SquareCenterlineDashedHorizontal, SquareCenterlineDashedVertical, Check, X, Copy, FolderOpen,
-  MonitorUp, ZoomIn, ZoomOut, Maximize, Download,
+  MonitorUp, ZoomIn, ZoomOut, Maximize, Download, Layers, Images,
 } from 'lucide-react';
 import { api, useStore, mediaUrl, fileName, type MediaItem } from '../api';
 import { Btn, Segmented } from '../components/controls';
+import { GalleryPicker } from '../components/UpscalePicker';
+import { PasteLayerBox, PastePanel, bakeLayer, initialLayer, type Layer } from '../editor/PasteLayer';
 import { EditorGL, defaultAdjust, clone, autoAdjust, curveAt, CURVE_X, LOOKS, HSL_NAMES, HSL_COLORS, type Adjust, type Crop as CropRect } from '../editor/gl';
 
-type Tool = 'adjust' | 'crop' | 'erase' | 'chatgpt';
+type Tool = 'adjust' | 'crop' | 'erase' | 'paste' | 'chatgpt';
 type CgMode = 'expand' | 'remove' | 'enhance' | 'custom';
 /** One undo step: the working file plus the adjustments on top of it. */
 interface Snapshot { base: string | null; adj: Adjust }
@@ -53,6 +55,11 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [format, setFormat] = useState<'png' | 'jpg'>('png');
   const [batch, setBatch] = useState<{ done: number; total: number } | null>(null);
+  /** "Colar imagem": the picture placed on top, waiting for Aplicar. */
+  const [layer, setLayer] = useState<Layer | null>(null);
+  const [layerAlpha, setLayerAlpha] = useState(1);
+  const [feather, setFeather] = useState(0);
+  const [picker, setPicker] = useState<null | 'open' | 'layer'>(null);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -73,7 +80,7 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
     const best = await api.invoke<string | null>('editor:bestBase', file).catch(() => null);
     setSource(file);
     await loadBase(best || file);
-    setAdj(defaultAdjust()); setUndo([]); setRedo([]); setStrokes([]); setTool('adjust');
+    setAdj(defaultAdjust()); setUndo([]); setRedo([]); setStrokes([]); setTool('adjust'); setLayer(null);
   };
   const loadBase = async (file: string) => {
     const gl = glRef.current;
@@ -90,10 +97,10 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
 
   // Crop and eraser work on the whole (unrotated, for the eraser) image.
   const viewAdj = useMemo(() => {
-    if (tool !== 'crop' && tool !== 'erase') return adj;
+    if (tool !== 'crop' && tool !== 'erase' && tool !== 'paste') return adj;
     const a = clone(adj);
     a.crop = { ...NO_CROP };
-    if (tool === 'erase') { a.rotate = 0; a.flipX = false; a.flipY = false; }
+    if (tool === 'erase' || tool === 'paste') { a.rotate = 0; a.flipX = false; a.flipY = false; }
     return a;
   }, [adj, tool]);
 
@@ -165,6 +172,16 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) doRedo(); else doUndo(); }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); doRedo(); }
       if (e.key === '\\' && !(e.target instanceof HTMLInputElement)) setShowBefore((v) => !v);
+      const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v' && base && !typing) { e.preventDefault(); importLayerClipboard(); }
+      if (tool === 'paste' && layer && !typing) {
+        const gl = glRef.current;
+        const step = e.shiftKey ? 10 : 1;
+        const d = ({ ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] } as Record<string, number[]>)[e.key];
+        if (d && gl) { e.preventDefault(); setLayer({ ...layer, cx: layer.cx + d[0] / gl.width, cy: layer.cy + d[1] / gl.height }); }
+        if (e.key === 'Enter') { e.preventDefault(); applyLayer(); }
+        if (e.key === 'Escape') { e.preventDefault(); setLayer(null); }
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -238,13 +255,52 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
   };
   useEffect(() => { setZoom(1); setPan({ x: 0, y: 0 }); }, [base, tool]);
   const panDrag = useRef<{ x: number; y: number; p: { x: number; y: number } } | null>(null);
-  const canPan = zoom > 1 && (tool === 'adjust' || tool === 'chatgpt');
+  const canPan = zoom > 1 && (tool === 'adjust' || tool === 'chatgpt' || tool === 'paste');
 
   // --- Actions ---------------------------------------------------------------
   const browse = async () => {
     const [f] = await api.invoke<string[]>('dialog:files', { title: 'Imagem para editar' });
     if (f) open(f);
   };
+  // --- Colar imagem ------------------------------------------------------------
+  const importLayer = async (file: string) => {
+    const gl = glRef.current;
+    if (!gl || !gl.width) return;
+    const url = mediaUrl(file);
+    try {
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      setLayer(initialLayer(file, url, img.naturalWidth, img.naturalHeight, gl.width, gl.height));
+      setLayerAlpha(1);
+      setTool('paste');
+    } catch (err: any) {
+      toast({ kind: 'error', title: 'Não consegui abrir a imagem', message: err.message || String(err) });
+    }
+  };
+  const importLayerFile = async () => {
+    const [f] = await api.invoke<string[]>('dialog:files', { title: 'Imagem para colar por cima' });
+    if (f) importLayer(f);
+  };
+  const importLayerClipboard = async () => {
+    const f = await api.invoke<string | null>('editor:clipboardImage');
+    if (f) importLayer(f);
+    else toast({ kind: 'info', title: 'Nada copiado', message: 'Copie uma imagem (no ChatGPT, no navegador ou no Explorer) e tente de novo.' });
+  };
+  const applyLayer = async () => {
+    if (!layer || !base) return;
+    setBusy('Colando a imagem em resolução total…');
+    try {
+      const bytes = await bakeLayer(mediaUrl(base), layer, feather);
+      const out = await api.invoke<string>('editor:writeTemp', bytes);
+      commit(adj, out);
+      setLayer(null);
+      toast({ kind: 'ok', title: 'Imagem colada', message: 'Use Desfazer (Ctrl+Z) para voltar.' });
+    } catch (err: any) {
+      toast({ kind: 'error', title: 'Não consegui colar', message: err.message });
+    } finally { setBusy(''); }
+  };
+
   const keepGeometry = () => ({ rotate: adj.rotate, flipX: adj.flipX, flipY: adj.flipY, crop: adj.crop });
   const auto = () => {
     const gl = glRef.current;
@@ -284,6 +340,7 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
   const save = async (monitorId?: string) => {
     const gl = glRef.current;
     if (!gl || !source) return;
+    if (layer) { setTool('paste'); toast({ kind: 'warn', title: 'Falta aplicar a imagem colada', message: 'Clique em Aplicar (ou Cancelar) na aba Colar antes de salvar.' }); return; }
     setBusy('Salvando em resolução total…');
     try {
       const bytes = await gl.exportPng(adj);
@@ -426,7 +483,8 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
           </p>
         </div>
         <div className="actions">
-          <Btn onClick={browse}><ImagePlus size={16} /> Abrir</Btn>
+          <Btn onClick={browse} title="Abrir uma imagem do computador"><ImagePlus size={16} /> Abrir</Btn>
+          <Btn onClick={() => setPicker('open')} title="Abrir uma imagem da galeria do app"><Images size={16} /> Da galeria</Btn>
           <Btn className="icon" title="Desfazer (Ctrl+Z)" onClick={doUndo} disabled={!undo.length}><Undo2 size={16} /></Btn>
           <Btn className="icon" title="Refazer (Ctrl+Y)" onClick={doRedo} disabled={!redo.length}><Redo2 size={16} /></Btn>
           <Btn className={`icon ${showBefore ? 'primary' : ''}`} title="Antes/depois (segure, ou tecla \)"
@@ -459,7 +517,10 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
               <ImagePlus size={36} />
               <h3>Abra uma imagem</h3>
               <p>Pela Galeria (botão Editar) ou pelo botão Abrir. Se existir a versão 4K, ela é usada automaticamente.</p>
-              <Btn className="primary" onClick={browse}><ImagePlus size={16} /> Abrir imagem</Btn>
+              <div className="row" style={{ gap: 8 }}>
+                <Btn className="primary" onClick={browse}><ImagePlus size={16} /> Do computador</Btn>
+                <Btn onClick={() => setPicker('open')}><Images size={16} /> Da galeria</Btn>
+              </div>
             </div>
           )}
           <div
@@ -479,6 +540,9 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
               <div className="crop-box" style={{ left: `${cropDraft.x * 100}%`, top: `${cropDraft.y * 100}%`, width: `${cropDraft.w * 100}%`, height: `${cropDraft.h * 100}%` }}>
                 <i className="h tl" /><i className="h br" />
               </div>
+            )}
+            {tool === 'paste' && layer && glRef.current && (
+              <PasteLayerBox layer={layer} onChange={(l) => setLayer(l)} bw={glRef.current.width} bh={glRef.current.height} viewW={view.w} viewH={view.h} zoom={zoom} alpha={layerAlpha} feather={feather} />
             )}
             {tool === 'erase' && <div className="brush-hint">Pinte por cima da marca d'água ou do objeto</div>}
           </div>
@@ -502,7 +566,7 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
 
         <div className="editor-side">
           <div className="tool-tabs">
-            {([['adjust', 'Ajustes', SlidersHorizontal], ['crop', 'Recorte', Crop], ['erase', 'Borracha', Eraser], ['chatgpt', 'ChatGPT', MessageSquare]] as const).map(([id, label, Icon]) => (
+            {([['adjust', 'Ajustes', SlidersHorizontal], ['crop', 'Recorte', Crop], ['erase', 'Borracha', Eraser], ['paste', 'Colar', Layers], ['chatgpt', 'ChatGPT', MessageSquare]] as const).map(([id, label, Icon]) => (
               <button key={id} className={tool === id ? 'on' : ''} onClick={() => setTool(id)} disabled={!base}>
                 {tool === id && <motion.span layoutId="tooltab" className="seg-pill" transition={{ type: 'spring', stiffness: 500, damping: 38 }} />}
                 <span><Icon size={15} /> {label}</span>
@@ -511,6 +575,12 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
           </div>
 
           <div className="editor-scroll">
+            {tool === 'paste' && (
+              <PastePanel layer={layer} setLayer={setLayer} bw={glRef.current?.width || 1} bh={glRef.current?.height || 1}
+                alpha={layerAlpha} setAlpha={setLayerAlpha} feather={feather} setFeather={setFeather}
+                onImportFile={importLayerFile} onImportGallery={() => setPicker('layer')} onImportClipboard={importLayerClipboard}
+                onApply={applyLayer} onCancel={() => setLayer(null)} busy={!!busy} />
+            )}
             {tool === 'adjust' && (
               <>
                 <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
@@ -680,6 +750,15 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
           )}
         </div>
       </div>
+      <AnimatePresence>
+        {picker && (
+          <GalleryPicker key="pick" single
+            title={picker === 'open' ? 'Abrir da galeria' : 'Imagem para colar por cima'}
+            hint={picker === 'open' ? 'Clique na imagem que você quer editar.' : 'Clique na imagem que vai por cima da que está aberta (por exemplo, o original).'}
+            onClose={() => setPicker(null)}
+            onPick={([p]) => { const which = picker; setPicker(null); if (p) { if (which === 'open') open(p); else importLayer(p); } }} />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

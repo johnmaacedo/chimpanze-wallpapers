@@ -2,7 +2,7 @@
 // Chimpanzé Wallpapers — main process
 const path = require('path');
 const fs = require('fs');
-const { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, screen, shell, Notification, globalShortcut } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, screen, shell, Notification, globalShortcut, clipboard } = require('electron');
 
 const log = require('./log');
 const proto = require('./protocol');
@@ -761,6 +761,14 @@ function registerIpc() {
     return out;
   });
   h('editor:writeTemp', (bytes) => { const f = workFile(); fs.writeFileSync(f, Buffer.from(bytes)); return f; });
+  // Picture copied to the clipboard (e.g. "Copiar imagem" in ChatGPT), saved as a work file.
+  h('editor:clipboardImage', () => {
+    const img = clipboard.readImage();
+    if (img.isEmpty()) return null;
+    const f = workFile();
+    fs.writeFileSync(f, img.toPNG());
+    return f;
+  });
 
   // ChatGPT desktop app bridge (expand / remove / enhance through the user's own ChatGPT).
   chatgpt = new (require('./chatgpt').ChatGptBridge)({ platform, workDir });

@@ -8,7 +8,8 @@ import { Btn, Segmented } from './controls';
  * Picks pictures from the app's own wallpaper folders (the same ones the
  * Gallery shows). Calls onPick with the chosen paths; nothing starts here.
  */
-export function GalleryPicker({ onPick, onClose }: { onPick: (paths: string[]) => void; onClose: () => void }) {
+/** Pictures already in the app. `single`: one click picks one picture (Editor). */
+export function GalleryPicker({ onPick, onClose, single, title, hint }: { onPick: (paths: string[]) => void; onClose: () => void; single?: boolean; title?: string; hint?: string }) {
   const { state, mediaVersion } = useStore();
   const folders = useMemo(() => {
     if (!state) return [] as { folder: string; label: string; monitors: number[] }[];
@@ -22,7 +23,7 @@ export function GalleryPicker({ onPick, onClose }: { onPick: (paths: string[]) =
   }, [state]);
   const [folder, setFolder] = useState<string | null>(folders[0]?.folder || null);
   const [items, setItems] = useState<MediaItem[] | null>(null);
-  const [filter, setFilter] = useState<'nok' | 'all'>('nok');
+  const [filter, setFilter] = useState<'nok' | 'all'>(single ? 'all' : 'nok');
   const [sel, setSel] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -42,8 +43,8 @@ export function GalleryPicker({ onPick, onClose }: { onPick: (paths: string[]) =
     <Modal onClose={onClose} wide>
       <div className="modal-head">
         <div>
-          <h2><Images size={18} /> Escolher da galeria</h2>
-          <p className="muted small">Os wallpapers que já estão no app. Marque quantos quiser.</p>
+          <h2><Images size={18} /> {title || 'Escolher da galeria'}</h2>
+          <p className="muted small">{hint || (single ? 'Os wallpapers que já estão no app. Clique em um.' : 'Os wallpapers que já estão no app. Marque quantos quiser.')}</p>
         </div>
         <button className="modal-x" onClick={onClose} aria-label="Fechar"><X size={18} /></button>
       </div>
@@ -63,23 +64,23 @@ export function GalleryPicker({ onPick, onClose }: { onPick: (paths: string[]) =
               ))}
             </div>
             <div className="grow" />
-            <Segmented value={filter} onChange={setFilter} options={[{ value: 'nok', label: 'Sem 4K' }, { value: 'all', label: 'Todas' }]} />
-            <Btn className="sm" onClick={selectAll} disabled={!shown.length}><CheckCheck size={14} /> {allOn ? 'Desmarcar' : 'Marcar'} todas</Btn>
+            {!single && <Segmented value={filter} onChange={setFilter} options={[{ value: 'nok', label: 'Sem 4K' }, { value: 'all', label: 'Todas' }]} />}
+            {!single && <Btn className="sm" onClick={selectAll} disabled={!shown.length}><CheckCheck size={14} /> {allOn ? 'Desmarcar' : 'Marcar'} todas</Btn>}
           </div>
           <div className="pick-grid">
             {items === null && Array.from({ length: 12 }).map((_, i) => <div key={i} className="pick-tile"><div className="skeleton" /></div>)}
             {items !== null && !shown.length && <div className="muted" style={{ gridColumn: '1/-1', padding: 20 }}>{items.length ? 'Todas as imagens desta pasta já têm versão 4K. Use “Todas” para refazer.' : 'Esta pasta não tem imagens.'}</div>}
-            {shown.map((it) => <PickTile key={it.path} item={it} on={sel.has(it.path)} onClick={() => toggle(it.path)} />)}
+            {shown.map((it) => <PickTile key={it.path} item={it} on={sel.has(it.path)} onClick={() => (single ? onPick([it.path]) : toggle(it.path))} />)}
           </div>
         </>
       )}
-      <div className="modal-foot">
+      {!single && <div className="modal-foot">
         <span className="muted small">{sel.size ? `${sel.size} imagem(ns) marcada(s)` : 'Nenhuma imagem marcada'}</span>
         <div className="row" style={{ gap: 8 }}>
           <Btn className="ghost" onClick={onClose}>Cancelar</Btn>
           <Btn className="primary" disabled={!sel.size} onClick={() => onPick([...sel])}>Continuar</Btn>
         </div>
-      </div>
+      </div>}
     </Modal>
   );
 }

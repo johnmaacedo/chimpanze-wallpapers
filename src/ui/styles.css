@@ -1551,7 +1551,7 @@ ol.steps li + li {
 }
 .tool-tabs {
   border-bottom: 1px solid var(--line);
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 4px;
   padding: 6px;
   display: grid;
@@ -2409,3 +2409,33 @@ input[type="range"]:active::-webkit-slider-thumb { transform: scale(1.22); box-s
 }
 .sc-warn svg { flex: none; margin-top: 1px; color: var(--mango); }
 .sc-hint { margin: 8px 2px 0; color: var(--muted); font-size: 12px; }
+
+/* Editor: "Colar" (a picture placed on top of the one being edited) */
+.paste-layer { position: absolute; outline: 1.5px solid var(--mango); box-shadow: 0 0 0 1px #0008, 0 10px 40px -10px #000c; cursor: move; touch-action: none; z-index: 3; }
+.paste-layer img { width: 100%; height: 100%; display: block; pointer-events: none; user-select: none; }
+.paste-layer .ph { position: absolute; width: 14px; height: 14px; border-radius: 4px; background: var(--mango); border: 2px solid #1a120d; box-shadow: 0 2px 8px #0009; }
+.paste-layer .ph.tl { left: -8px; top: -8px; cursor: nwse-resize; transform-origin: 100% 100%; }
+.paste-layer .ph.tr { right: -8px; top: -8px; cursor: nesw-resize; transform-origin: 0 100%; }
+.paste-layer .ph.bl { left: -8px; bottom: -8px; cursor: nesw-resize; transform-origin: 100% 0; }
+.paste-layer .ph.br { right: -8px; bottom: -8px; cursor: nwse-resize; transform-origin: 0 0; }
+.paste-layer .ph.rot { left: 50%; top: -34px; border-radius: 50%; cursor: grab; transform-origin: 50% 100%; }
+.paste-layer .ph.rot::after { content: ""; position: absolute; left: 50%; top: 100%; width: 2px; height: 18px; margin-left: -1px; background: var(--mango); }
+.paste-guide { position: absolute; z-index: 4; pointer-events: none; background: var(--mint); box-shadow: 0 0 6px var(--mint); }
+.paste-guide.v { left: 50%; top: 0; bottom: 0; width: 1px; }
+.paste-guide.h { top: 50%; left: 0; right: 0; height: 1px; }
+.paste-panel { display: flex; flex-direction: column; gap: 12px; }
+.paste-panel > .label { color: var(--ink-2); font-size: 12.5px; font-weight: 650; }
+.paste-import { display: flex; flex-wrap: wrap; gap: 6px; }
+.paste-presets { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.paste-presets button { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; padding: 10px; border-radius: 12px; border: 1px solid var(--line); background: var(--cocoa-2); color: var(--ink); text-align: left; cursor: pointer; transition: border-color .2s, background .2s, transform .15s; }
+.paste-presets button:hover { border-color: color-mix(in srgb, var(--mango) 50%, transparent); transform: translateY(-1px); }
+.paste-presets button svg { color: var(--mango); }
+.paste-presets button b { font-size: 12.5px; }
+.paste-presets button span { font-size: 11px; color: var(--muted); }
+.paste-presets .pp-main { grid-column: 1 / -1; background: color-mix(in srgb, var(--mango) 10%, var(--cocoa-2)); border-color: color-mix(in srgb, var(--mango) 40%, transparent); }
+.paste-align { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; }
+.paste-align button { height: 32px; display: grid; place-items: center; border-radius: 9px; border: 1px solid var(--line); background: var(--cocoa-2); color: var(--ink-2); cursor: pointer; }
+.paste-align button:hover, .paste-align button.on { color: var(--mango); border-color: color-mix(in srgb, var(--mango) 45%, transparent); }
+.paste-range { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; color: var(--ink-2); }
+.paste-range b { color: var(--ink); font-weight: 650; }
+.paste-range input { width: 100%; accent-color: var(--mango); }
