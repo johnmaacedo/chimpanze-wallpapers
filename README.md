@@ -1,4 +1,4 @@
-# Chimpanzé Wallpapers — v1.5.8
+# Chimpanzé Wallpapers — v1.5.9
 
 Wallpapers independentes por monitor para Windows, com transições em GPU estilo motion design, profundidade 3D (parallax) com recorte por IA, personagens de anime que piscam, upscale 4K com IA e um editor de imagem. Tudo roda **local** na sua placa de vídeo.
 
@@ -6,7 +6,7 @@ Wallpapers independentes por monitor para Windows, com transições em GPU estil
 
 ## Instalar (usuário)
 
-1. Baixe `Chimpanze-Wallpapers-Setup-1.5.8.exe` na página **[Releases](../../releases)**.
+1. Baixe `Chimpanze-Wallpapers-Setup-1.5.9.exe` na página **[Releases](../../releases)**.
 2. Rode o instalador e siga os passos. Guia completo, passo a passo e com solução de problemas: **[docs/INSTALACAO.md](docs/INSTALACAO.md)**.
 
 Requisitos: Windows 10 ou 11 (64 bits), placa de vídeo com DirectX 12 (NVIDIA, AMD ou Intel) e cerca de 1,5 GB livres. A edição por IA do Editor usa o aplicativo do ChatGPT para Windows (opcional).

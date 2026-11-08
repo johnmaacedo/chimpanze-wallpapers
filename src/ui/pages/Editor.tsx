@@ -396,9 +396,10 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
     setBusy('Salvando em resolução total…');
     try {
       const bytes = await gl.exportPng(adj);
-      const out = await api.invoke<string>('editor:save', { source, bytes, format });
-      if (monitorId) await api.invoke('monitor:apply', monitorId, source, { fix: false });
-      toast({ kind: 'ok', title: 'Salvo', message: `${fileName(out)} — os monitores passam a usar esta versão.` });
+      const r = await api.invoke<{ out: string; updated: boolean; canceled?: boolean }>('editor:save', { source, bytes, format });
+      if (r.canceled) return;
+      if (monitorId) await api.invoke('monitor:apply', monitorId, r.updated ? source : r.out, { fix: false });
+      toast({ kind: 'ok', title: r.updated ? 'Imagem da galeria atualizada' : 'Salvo', message: r.updated ? `${fileName(r.out)} foi atualizada (o original ficou guardado na pasta _Backup).` : r.out });
     } catch (err: any) {
       toast({ kind: 'error', title: 'Não consegui salvar', message: err.message });
     } finally { setBusy(''); }
@@ -418,7 +419,7 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
         const best = await api.invoke<string | null>('editor:bestBase', list[i].path);
         await gl.load(mediaUrl(best || list[i].path));
         const bytes = await gl.exportPng(a);
-        await api.invoke('editor:save', { source: list[i].path, bytes, format });
+        await api.invoke('editor:save', { source: list[i].path, bytes, format, mode: 'edited' });
         setBatch({ done: i + 1, total: list.length });
       }
       toast({ kind: 'ok', title: 'Ajustes aplicados na pasta', message: `${list.length} imagens salvas em _Editado.` });
