@@ -32,6 +32,19 @@ Veja os wallpapers das pastas do app, aplique em qualquer monitor, compare antes
 ## Editor
 Ajustes (exposição, contraste, cor, nitidez…), recorte, **borracha** de marca d'água por IA e **edição pelo ChatGPT** (Expandir para o formato do monitor, Remover objeto, Melhorar, Livre). Essa última exige o app do ChatGPT instalado; o Chimpanzé cola a imagem e o pedido e pega o resultado quando você baixar ou copiar a imagem.
 
+- **Abrir:** do computador (**Abrir**) ou da galeria do app (**Da galeria**).
+- **Colar** (aba nova): coloca outra imagem por cima da que está aberta. Serve, por exemplo, para pôr o original de volta no centro de uma expansão do ChatGPT (quando você escondeu o centro para o ChatGPT não censurar):
+  1. Abra a imagem expandida.
+  2. Na aba **Colar**, importe o original **do computador**, **da galeria** ou **colando** uma imagem copiada (Ctrl+V).
+  3. Ela já entra no centro, com a altura toda. Ajuste se precisar:
+     - **Encaixes prontos:** Centro com altura toda, Centro com largura toda, Centralizar (sem mudar o tamanho), Tamanho real (1 pixel = 1 pixel) e Cobrir tudo;
+     - **Alinhar:** encostar à esquerda, à direita, em cima ou embaixo, centro na horizontal ou na vertical, espelhar e endireitar;
+     - **Com o mouse:** arraste para mover (gruda no centro e nas bordas; Alt solta o ímã), puxe os cantos para o tamanho e a bolinha de cima para girar (Shift = de 15 em 15°);
+     - **Pelo teclado e pelos controles:** setas movem 1 px (Shift = 10 px); Tamanho e Rotação também têm controle deslizante;
+     - **Ver através:** deixa a imagem colada transparente só para alinhar (o resultado sai sem transparência);
+     - **Bordas suaves:** a beirada da imagem colada se mistura com a de baixo.
+  4. **Aplicar** (Enter) junta as duas em resolução total. **Desfazer** (Ctrl+Z) volta; **Cancelar** (Esc) descarta.
+
 ## Ajustes
 Iniciar com o Windows, pausar em tela cheia ou atrás de janela maximizada, wallpaper oficial do Windows ao sair, transição padrão e intensidade dos efeitos, transições usadas no modo aleatório, "Reduzir movimento", opções do ChatGPT e **Atalhos**.
 
