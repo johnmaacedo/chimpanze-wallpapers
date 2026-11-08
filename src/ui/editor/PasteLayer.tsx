@@ -199,6 +199,7 @@ export function PastePanel(p: {
             <>
               <span className="small muted">Cola só onde esta imagem está pintada (a parte escondida do ChatGPT). Bordas redesenhadas pelo ChatGPT ficam intactas.</span>
               <Range label="Aumentar a área" value={opts.grow} min={0} max={80} step={1} fmt={(v) => `${Math.round(v)} px`} on={(v) => O({ grow: v })} />
+              <Range label="Limpar restos de tinta em volta" value={opts.halo} min={0} max={200} step={1} fmt={(v) => (v < 1 ? 'Não' : `até ${Math.round(v)} px`)} on={(v) => O({ halo: v })} />
               <Range label="Borda suave da área" value={opts.soft} min={0} max={80} step={1} fmt={(v) => `${Math.round(v)} px`} on={(v) => O({ soft: v })} />
             </>
           )}

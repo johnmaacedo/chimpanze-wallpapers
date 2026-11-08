@@ -11,6 +11,7 @@ const ANIMATED_EXT = new Set(['.gif']);
 const VIDEO_EXT = new Set(['.mp4', '.webm', '.m4v', '.mov']);
 const UPSCALE_DIR = '_4K';
 const EDIT_DIR = '_Editado';
+const BACKUP_DIR = '_Backup'; // originals kept when the Editor updates a gallery picture in place
 
 function mediaType(file) {
   const ext = path.extname(file).toLowerCase();
@@ -32,7 +33,7 @@ async function listMedia(folder, { includeSubfolders = false, maxDepth = 4 } = {
       if (e.name.startsWith('.')) continue;
       const full = path.join(dir, e.name);
       if (e.isDirectory()) {
-        if (includeSubfolders && depth < maxDepth && e.name !== UPSCALE_DIR && e.name !== EDIT_DIR) await walk(full, depth + 1);
+        if (includeSubfolders && depth < maxDepth && e.name !== UPSCALE_DIR && e.name !== EDIT_DIR && e.name !== BACKUP_DIR) await walk(full, depth + 1);
         continue;
       }
       const type = mediaType(e.name);
@@ -166,6 +167,6 @@ async function imageSize(file) {
 }
 
 module.exports = {
-  IMAGE_EXT, VIDEO_EXT, ANIMATED_EXT, UPSCALE_DIR, EDIT_DIR, editedPathFor, bestVersion,
+  IMAGE_EXT, VIDEO_EXT, ANIMATED_EXT, UPSCALE_DIR, EDIT_DIR, BACKUP_DIR, editedPathFor, bestVersion,
   mediaType, isMedia, listMedia, listMediaDetailed, upscaledPathFor, thumbnail, imageSize,
 };

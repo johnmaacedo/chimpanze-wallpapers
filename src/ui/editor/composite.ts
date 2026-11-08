@@ -20,6 +20,8 @@ export interface PasteOpts {
   mode: 'all' | 'paint';
   /** Grow the painted area (px of the edited picture) and soften its edge (px). */
   grow: number; soft: number;
+  /** How far around the paint to look for its leftovers (ChatGPT blurs the paint's edge into a faint rim), px. */
+  halo: number;
   /** Soft edge of the whole picture (px). */
   feather: number;
   /** 0..1: local colour matching to the picture below. */
@@ -28,7 +30,7 @@ export interface PasteOpts {
   bright: number; contrast: number; sat: number; temp: number;
 }
 
-export const defaultOpts = (): PasteOpts => ({ mode: 'all', grow: 10, soft: 8, feather: 0, match: 1, bright: 0, contrast: 0, sat: 0, temp: 0 });
+export const defaultOpts = (): PasteOpts => ({ mode: 'all', grow: 12, soft: 8, halo: 50, feather: 0, match: 1, bright: 0, contrast: 0, sat: 0, temp: 0 });
 export const NO_CORNERS: [number, number][] = [[0, 0], [0, 0], [0, 0], [0, 0]];
 
 /** Height of the layer box relative to the edited picture's height. */
@@ -170,6 +172,21 @@ export function composite(B: Pix, S: Pix, g: LayerGeom, o: PasteOpts, scale = 1)
       // Hand paint is a vivid flat colour: white, grey or black areas (a redrawn sink, a wall) never count.
       const mx = Math.max(pr, pg, pb), mn = Math.min(pr, pg, pb), sat = mx > 0 ? (mx - mn) / mx : 0;
       if (dp < 110 || (diff > 50 && std < 9 && sat > 0.45 && mx > 60)) isPaint[k] = 1;
+    }
+    // Leftovers of the paint around it: ChatGPT softens the paint's edge into a faint tinted rim.
+    // Near the paint, a pixel that is clearly closer to the paint colour than the original is counts too.
+    const halo = Math.round(o.halo / scale);
+    let pn = 0; const pm = [0, 0, 0];
+    for (let k = 0; k < N; k++) if (isPaint[k]) { pn++; pm[0] += bd[k * 4]; pm[1] += bd[k * 4 + 1]; pm[2] += bd[k * 4 + 2]; }
+    if (halo > 0 && pn > 30) {
+      for (let c = 0; c < 3; c++) pm[c] /= pn;
+      const near = boxBlur(isPaint, W, H, halo, 1);
+      for (let k = 0; k < N; k++) {
+        if (!edge[k] || isPaint[k] || near[k] <= 0.002) continue;
+        const dB = Math.abs(bd[k * 4] - pm[0]) + Math.abs(bd[k * 4 + 1] - pm[1]) + Math.abs(bd[k * 4 + 2] - pm[2]);
+        const dL = Math.abs(L[k * 3] - pm[0]) + Math.abs(L[k * 3 + 1] - pm[1]) + Math.abs(L[k * 3 + 2] - pm[2]);
+        if (dL - dB > 24) isPaint[k] = 1;
+      }
     }
   }
   // Local colour matching: the colour difference where both agree, spread smoothly (no visible square).

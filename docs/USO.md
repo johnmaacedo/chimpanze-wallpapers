@@ -39,7 +39,7 @@ Ajustes (exposição, contraste, cor, nitidez…), recorte, **borracha** de marc
   2. Na aba **Colar**, importe o original **do computador**, **da galeria** ou **colando** uma imagem copiada (Ctrl+V).
   3. O **Encaixe automático** roda sozinho em poucos segundos. Ele acha o tamanho, a posição e um leve esticado que o ChatGPT tenha feito, liga "Só a parte pintada" e mostra o resultado.
   4. **O que colar:**
-     - **Só a parte pintada:** cola só onde a expansão ainda mostra a pintura. Assim, o que o ChatGPT redesenhou em volta fica intacto e não aparece emenda. "Aumentar a área" e "Borda suave da área" ajustam a beirada.
+     - **Só a parte pintada:** cola só onde a expansão ainda mostra a pintura. Assim, o que o ChatGPT redesenhou em volta fica intacto e não aparece emenda. "Limpar restos de tinta em volta" pega o contorno fraco de tinta que o ChatGPT deixa na borda da pintura; "Aumentar a área" e "Borda suave da área" ajustam a beirada.
      - **A imagem toda:** cola o retângulo inteiro (tem "Borda suave da imagem").
   5. **Ver:**
      - **Resultado:** a prévia do resultado final. Dá para marcar em vermelho a área colada.
@@ -52,6 +52,8 @@ Ajustes (exposição, contraste, cor, nitidez…), recorte, **borracha** de marc
      - **Perspectiva (cantos):** cada canto arrasta sozinho (Shift = movimento fino). "Tirar a perspectiva" volta ao normal.
      - **Atalhos de posição:** os encaixes prontos (centro, altura toda, largura toda, tamanho real, cobrir), os botões de alinhar, espelhar e endireitar.
   8. **Aplicar** (Enter) junta tudo em resolução total. **Desfazer** (Ctrl+Z) volta; **Cancelar** (Esc) descarta.
+
+- **Salvar:** se a imagem está na galeria do app, ela é **atualizada no lugar** (a versão 4K, se existir, também) e o original fica guardado na subpasta `_Backup`. Imagem de fora da galeria abre a janela para escolher a pasta e o nome. A opção PNG/JPG vale para "Salvar como"; ao atualizar, o formato do arquivo original é mantido.
 
 ## Ajustes
 Iniciar com o Windows, pausar em tela cheia ou atrás de janela maximizada, wallpaper oficial do Windows ao sair, transição padrão e intensidade dos efeitos, transições usadas no modo aleatório, "Reduzir movimento", opções do ChatGPT e **Atalhos**.

@@ -471,6 +471,18 @@ function publicState() {
 
 function safe(fn, fallback) { try { return fn(); } catch (_) { return fallback; } }
 
+/** The picture is in a folder of the app's gallery (a monitor's folder, or below it with subfolders on). */
+function inGallery(file) {
+  const f = path.resolve(file).toLowerCase();
+  return Object.values(config.data.monitors).some((c) => {
+    if (!c.folder) return false;
+    const dir = path.resolve(c.folder).toLowerCase() + path.sep;
+    if (!f.startsWith(dir)) return false;
+    const rest = f.slice(dir.length);
+    return !rest.includes(path.sep) || (c.includeSubfolders && !/(^|[\\/])_(4k|editado|backup)([\\/]|$)/i.test(rest));
+  });
+}
+
 function imageDepthInfo(file) {
   const cuts = require('./ai/depth').CUTS;
   const o = config.image(file);
@@ -856,23 +868,56 @@ function registerIpc() {
     if (res.skipped) throw new Error(res.reason);
     return res.output;
   });
-  h('editor:save', async ({ source, bytes, format }) => {
+  // Save: a picture of the app's gallery is updated in place (the first original is kept in
+  // _Backup); any other picture asks where to save. `mode: 'edited'` (batch) keeps the _Editado copy.
+  h('editor:save', async ({ source, bytes, format, mode }) => {
     const sharp = require('./img');
-    const dir = path.join(path.dirname(source), library.EDIT_DIR);
-    fs.mkdirSync(dir, { recursive: true });
+    const write = async (file, fmt) => {
+      let img = sharp(Buffer.from(bytes), { limitInputPixels: false });
+      img = fmt === 'jpg' ? img.jpeg({ quality: 95, chromaSubsampling: '4:4:4', mozjpeg: true }) : fmt === 'webp' ? img.webp({ quality: 95 }) : img.png({ compressionLevel: 6 });
+      const tmp = file + '.tmp-' + Date.now();
+      await img.toFile(tmp);
+      fs.renameSync(tmp, file);
+    };
+    const fmtOf = (file) => { const e = path.extname(file).toLowerCase(); return e === '.jpg' || e === '.jpeg' ? 'jpg' : e === '.webp' ? 'webp' : 'png'; };
     const name = path.parse(source).name;
-    for (const ext of ['.png', '.jpg']) fs.rmSync(path.join(dir, name + ext), { force: true });
-    const out = path.join(dir, name + (format === 'jpg' ? '.jpg' : '.png'));
-    let img = sharp(Buffer.from(bytes), { limitInputPixels: false });
-    img = format === 'jpg' ? img.jpeg({ quality: 95, chromaSubsampling: '4:4:4', mozjpeg: true }) : img.png({ compressionLevel: 6 });
-    await img.toFile(out);
+    let out; let updated = false;
+    if (mode === 'edited') {
+      const dir = path.join(path.dirname(source), library.EDIT_DIR);
+      fs.mkdirSync(dir, { recursive: true });
+      for (const ext of ['.png', '.jpg']) fs.rmSync(path.join(dir, name + ext), { force: true });
+      out = path.join(dir, name + (format === 'jpg' ? '.jpg' : '.png'));
+      await write(out, format === 'jpg' ? 'jpg' : 'png');
+    } else if (inGallery(source)) {
+      const backupDir = path.join(path.dirname(source), library.BACKUP_DIR);
+      const backup = path.join(backupDir, path.basename(source));
+      if (!fs.existsSync(backup)) { fs.mkdirSync(backupDir, { recursive: true }); fs.copyFileSync(source, backup); }
+      await write(source, fmtOf(source));
+      // The 4K version would still be shown instead: it gets the new picture too. An old _Editado copy goes.
+      const up = library.upscaledPathFor(source);
+      if (up) await write(up, fmtOf(up));
+      const ed = path.join(path.dirname(source), library.EDIT_DIR);
+      for (const ext of ['.png', '.jpg', '.jpeg', '.webp']) fs.rmSync(path.join(ed, name + ext), { force: true });
+      out = source; updated = true;
+    } else {
+      const ext = format === 'jpg' ? 'jpg' : 'png';
+      const r = await dialog.showSaveDialog(mainWin, {
+        title: 'Salvar imagem editada',
+        defaultPath: path.join(path.dirname(source), `${name} (editada).${ext}`),
+        filters: [{ name: 'PNG', extensions: ['png'] }, { name: 'JPG', extensions: ['jpg', 'jpeg'] }, { name: 'WebP', extensions: ['webp'] }],
+      });
+      if (r.canceled || !r.filePath) return { canceled: true };
+      out = r.filePath;
+      await write(out, fmtOf(out));
+    }
     broadcast('media-changed', { folder: path.dirname(source) });
+    if (!updated && mode !== 'edited') return { out, updated };
     // Refresh any monitor currently showing this image.
     for (const m of monitors.monitors) {
       const c = config.data.monitors[m.id];
       if (c && (c.current === source || c.fixed === source)) scheduler.display(m.id, source, { noHistory: true });
     }
-    return out;
+    return { out, updated };
   });
 
   // Legacy app (Wallpaper por Monitor V5) — disable its auto-start so both don't fight.
