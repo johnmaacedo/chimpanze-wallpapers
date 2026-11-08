@@ -2442,3 +2442,77 @@ input[type="range"]:active::-webkit-slider-thumb { transform: scale(1.22); box-s
 .paste-range { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; color: var(--ink-2); }
 .paste-range b { color: var(--ink); font-weight: 650; }
 .paste-range input { width: 100%; accent-color: var(--mango); }
+
+/* 1.6.0 — "Juntar com o original" box in the expansion result */
+.merge-box {
+  background: #6bdc8b0d;
+  border: 1px solid #6bdc8b40;
+  border-radius: 12px;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  display: flex;
+}
+.merge-warn {
+  color: #ffcf8a;
+  background: #ffb5470f;
+  border-radius: 8px;
+  padding: 6px 8px;
+  line-height: 1.4;
+}
+.merge-warn svg { vertical-align: -2px; }
+
+/* 1.6.0 — Editor: tools grouped by purpose, and the guided Expandir flow */
+.tool-groups {
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 8px 6px 6px;
+}
+.tool-group { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tool-group + .tool-group { border-left: 1px solid var(--line); padding-left: 6px; }
+.tool-group-title {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  padding: 0 6px;
+}
+.tool-groups .tool-tabs {
+  border-bottom: 0;
+  grid-template-columns: repeat(3, 1fr);
+  padding: 2px 0 0;
+}
+.tool-groups .tool-tabs button { height: 50px; font-size: 11px; }
+.steps { display: flex; flex-direction: column; gap: 12px; }
+.step {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #ffffff05;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.step-head { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.step-n {
+  width: 24px; height: 24px; border-radius: 50%;
+  display: inline-grid; place-items: center; flex: none;
+  font-size: 12px; font-weight: 800; color: #1b130f;
+  background: linear-gradient(135deg, var(--mango), var(--coral));
+  box-shadow: 0 0 14px #ffb5474d;
+}
+.step-body { display: flex; flex-direction: column; gap: 8px; }
+.prompt-box summary { cursor: pointer; color: var(--muted); padding: 2px 0; }
+.prompt-box[open] summary { margin-bottom: 6px; }
+.prompt-box textarea { min-height: 220px; font-size: 12px; }
+.pbar { height: 6px; border-radius: 6px; background: #ffffff12; overflow: hidden; }
+.pbar i {
+  display: block; height: 100%; border-radius: 6px;
+  background: linear-gradient(90deg, var(--mango), var(--coral));
+  transition: width .4s ease;
+}
+.pbar i.indet { animation: pbar-indet 1.4s ease-in-out infinite; }
+@keyframes pbar-indet { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }

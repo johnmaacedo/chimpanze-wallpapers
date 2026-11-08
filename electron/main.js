@@ -42,7 +42,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 }
 
-let config; let shortcuts; let monitors; let hosts; let scheduler; let jobs; let platform; let library; let upscaler; let tools; let lama; let chatgpt;
+let config; let shortcuts; let monitors; let hosts; let scheduler; let jobs; let platform; let library; let upscaler; let tools; let lama; let chatgpt; let localAi;
 let mainWin = null;
 let tray = null;
 let quitting = false;
@@ -437,6 +437,7 @@ app.on('before-quit', () => {
   try { if (config) config.saveNow(); } catch (_) { /* ignore */ }
   try { if (hosts) hosts.destroyAll(); } catch (_) { /* ignore */ }
   try { if (shortcuts) shortcuts.dispose(); else globalShortcut.unregisterAll(); } catch (_) { /* ignore */ }
+  try { if (localAi) localAi.stop(); } catch (_) { /* ignore */ }
 });
 
 app.on('window-all-closed', (e) => {
@@ -861,6 +862,61 @@ function registerIpc() {
     }
     return { output: out, width: 0, height: 0, model: '', kind: 'chatgpt', skipped: false };
   }, { file: opts.source, chatgpt: true }));
+  // "Juntar com o original": the untouched original goes back into an expansion (worker
+  // thread, merge-core.js); paint that ChatGPT carried into the new areas is then filled by LaMa.
+  /** Best unpainted version of the original: the 4K one, the picture itself, or its _Backup copy. */
+  const pickOriginal = async (source) => {
+    const sharp = require('./img');
+    const { _test: { paintShare } } = require('./merge-core');
+    const backup = path.join(path.dirname(source), library.BACKUP_DIR, path.basename(source));
+    const list = [library.upscaledPathFor(source), source, fs.existsSync(backup) ? backup : null].filter(Boolean);
+    for (const f of list) {
+      try {
+        const raw = await sharp(f, { limitInputPixels: false }).resize(320, 320, { fit: 'inside' }).removeAlpha().raw().toBuffer();
+        if (paintShare(raw) < 0.002) return f;
+      } catch (_) { /* unreadable: try the next */ }
+    }
+    return source;
+  };
+  h('expand:merge', async ({ source, expansion, aspect, place, original: sent }) => {
+    // `sent`: the exact picture the local AI expanded (with the Editor's crop/adjustments);
+    // otherwise (ChatGPT got a painted copy) the best unpainted version of the original.
+    const original = sent && fs.existsSync(sent) ? sent : await pickOriginal(source);
+    const out = workFile(); const maskOut = workFile('.mask.png');
+    const t0 = Date.now();
+    const r = await new Promise((resolve, reject) => {
+      const { Worker } = require('worker_threads');
+      const w = new Worker(path.join(__dirname, 'merge-worker.js'), { workerData: { original, expansion, aspect: Number(aspect) || 0, place: place || null, out, maskOut } });
+      w.on('message', (m) => {
+        if (m.stage) { broadcast('expand:stage', m.stage); return; }
+        w.terminate();
+        if (m.ok) resolve(m.r); else reject(Object.assign(new Error(m.error), { code: m.code }));
+      });
+      w.once('error', reject);
+    });
+    if (r.paintMask) {
+      broadcast('expand:stage', 'Apagando restos de tinta azul…');
+      const fixed = workFile();
+      try {
+        await lama.erase(r.out, r.paintMask, fixed);
+        r.out = fixed;
+        r.warnings.push('O ChatGPT levou um pouco da tinta azul para as partes novas; apaguei com IA. Confira esse trecho no zoom.');
+      } catch (err) {
+        log.warn('juntar: LaMa falhou na tinta que sobrou', err.message);
+        r.warnings.push('Sobrou um pouco de tinta azul nas partes novas. Apague com a Borracha no Editor.');
+      } finally { fs.rmSync(r.paintMask, { force: true }); }
+    }
+    fs.rmSync(maskOut, { force: true });
+    log.info('juntar: pronto', path.basename(original), `${r.width}x${r.height}`, 'encaixe', r.score, JSON.stringify(r.seams), `${Date.now() - t0} ms`);
+    return { file: r.out, width: r.width, height: r.height, score: r.score, warnings: r.warnings, original };
+  });
+  // Local AI expansion (FLUX Fill through the app's own ComfyUI, started only while needed).
+  localAi = new (require('./localai').LocalAi)({ resource, workFile });
+  localAi.on('status', (st) => broadcast('localai:status', st));
+  h('localai:status', () => localAi.status());
+  h('localai:install', () => localAi.install());
+  h('localai:expand', (opts) => localAi.expand(opts));
+  h('localai:cancel', () => localAi.cancel());
   h('editor:upscale', async (base) => {
     const settings = Object.assign({}, config.global.upscale, { target: config.global.upscale.target || '4k', skipIfLarger: true });
     const ctx = { progress: () => {}, stage: () => {}, onCancel: () => {}, checkCanceled: () => {} };

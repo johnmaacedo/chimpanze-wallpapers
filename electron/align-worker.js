@@ -8,8 +8,16 @@ const { parentPort, workerData } = require('worker_threads');
 const sharp = require('./img');
 
 const MAXL = 2400; // working size cap (long side) for both pictures
+/** Colour of the "Pintar" brush (src/ui/editor/composite.ts PAINT_RGB). */
+const PAINT_RGB = [10, 100, 255];
 
-async function load(file) {
+/** A pixel that looks like the "Pintar" paint (also after ChatGPT re-shaded it a little). */
+function isPaint(r, g, b) {
+  return Math.abs(r - PAINT_RGB[0]) + Math.abs(g - PAINT_RGB[1]) + Math.abs(b - PAINT_RGB[2]) < 120;
+}
+
+/** `ignorePaint`: painted pixels get NaN grey levels, which every comparison below skips. */
+async function load(file, ignorePaint = false) {
   const meta = await sharp(file, { limitInputPixels: false }).rotate().metadata();
   const swap = (meta.orientation || 1) >= 5;
   const W0 = swap ? meta.height : meta.width, H0 = swap ? meta.width : meta.height;
@@ -17,7 +25,9 @@ async function load(file) {
   const w = Math.round(W0 * k), h = Math.round(H0 * k);
   const rgb = await sharp(file, { limitInputPixels: false }).rotate().resize(w, h, { fit: 'fill' }).removeAlpha().raw().toBuffer();
   const g = new Float32Array(w * h);
-  for (let i = 0; i < g.length; i++) g[i] = 0.299 * rgb[i * 3] + 0.587 * rgb[i * 3 + 1] + 0.114 * rgb[i * 3 + 2];
+  for (let i = 0; i < g.length; i++) {
+    g[i] = ignorePaint && isPaint(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]) ? NaN : 0.299 * rgb[i * 3] + 0.587 * rgb[i * 3 + 1] + 0.114 * rgb[i * 3 + 2];
+  }
   return { W0, H0, k, w, h, g, rgb };
 }
 
@@ -52,23 +62,26 @@ function sample(P, w, h, mask) {
 
 /** NCC of template T at (ox, oy) in I over the overlap (and T.m, when given). */
 function ncc(T, I, ox, oy, step) {
-  let n = 0, st = 0, si = 0, stt = 0, sii = 0, sti = 0;
+  let n = 0, tot = 0, st = 0, si = 0, stt = 0, sii = 0, sti = 0;
   const y0 = Math.max(0, -oy), y1 = Math.min(T.h, I.h - oy), x0 = Math.max(0, -ox), x1 = Math.min(T.w, I.w - ox);
   for (let y = y0; y < y1; y += step) {
     const tr = y * T.w, ir = (y + oy) * I.w + ox;
     for (let x = x0; x < x1; x += step) {
       if (T.m && !T.m[tr + x]) continue;
+      tot++;
       const t = T.g[tr + x], v = I.g[ir + x];
+      if (v !== v || t !== t) continue; // paint (NaN) is left out
       n++; st += t; si += v; stt += t * t; sii += v * v; sti += t * v;
     }
   }
-  if (n < (T.m ? 150 : (T.w * T.h * 0.2) / (step * step))) return -1;
+  // Enough overlap (paint included), and enough of it actually compared (paint can hide most of a person).
+  if (tot < (T.m ? 150 : (T.w * T.h * 0.2) / (step * step)) || n < Math.max(40, tot * 0.2)) return -1;
   const ct = stt - (st * st) / n, ci = sii - (si * si) / n, c = sti - (st * si) / n;
   return c / Math.sqrt(Math.max(1e-6, ct * ci));
 }
 
-async function run({ base, layer }) {
-  const B = await load(base), L = await load(layer);
+async function run({ base, layer, ignorePaint = false }) {
+  const B = await load(base, ignorePaint), L = await load(layer, ignorePaint);
   const PB = pyramid(B), PL = pyramid(L);
   // Scale s maps layer working pixels to base working pixels.
   const fit = Math.min(B.w / L.w, B.h / L.h), cover = Math.max(B.w / L.w, B.h / L.h);
@@ -143,9 +156,12 @@ function agreement(B, L, p) {
   const d = new Float32Array(w * h).fill(255);
   // Global gain/offset first (colours shift), then per-pixel difference.
   let n = 0, sa = 0, sb = 0, saa = 0, sab = 0;
-  for (const [li, bi] of pairs(B, L, p, st)) { const a = L.g[li], b = B.g[bi]; n++; sa += a; sb += b; saa += a * a; sab += a * b; }
+  for (const [li, bi] of pairs(B, L, p, st)) { const a = L.g[li], b = B.g[bi]; if (a !== a || b !== b) continue; n++; sa += a; sb += b; saa += a * a; sab += a * b; }
   const g = n > 10 ? (sab - (sa * sb) / n) / Math.max(1, saa - (sa * sa) / n) : 1, o = n > 10 ? (sb - g * sa) / n : 0;
-  for (const [li, bi, x, y] of pairs(B, L, p, st)) d[Math.floor(y / st) * w + Math.floor(x / st)] = Math.abs(g * L.g[li] + o - B.g[bi]);
+  for (const [li, bi, x, y] of pairs(B, L, p, st)) {
+    const v = Math.abs(g * L.g[li] + o - B.g[bi]);
+    if (v === v) d[Math.floor(y / st) * w + Math.floor(x / st)] = v; // paint stays "disagrees"
+  }
   // Smooth the difference (3×3) and keep the agreeing part.
   const m = new Uint8Array(w * h);
   for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
@@ -167,6 +183,7 @@ function matchColors(B, L, p, mask) {
   const list = [];
   for (const [li, bi, x, y] of pairs(B, L, p, st)) {
     if (mask && !mask.m[Math.min(mask.h - 1, Math.floor((y / L.h) * mask.h)) * mask.w + Math.min(mask.w - 1, Math.floor((x / L.w) * mask.w))]) continue;
+    if (L.g[li] !== L.g[li] || B.g[bi] !== B.g[bi]) continue;
     list.push([L.rgb[li * 3], L.rgb[li * 3 + 1], L.rgb[li * 3 + 2], B.rgb[bi * 3], B.rgb[bi * 3 + 1], B.rgb[bi * 3 + 2]]);
   }
   const gain = [1, 1, 1], off = [0, 0, 0];
@@ -185,4 +202,9 @@ function matchColors(B, L, p, mask) {
   return { gain: gain.map((v) => +v.toFixed(4)), off: off.map((v) => +v.toFixed(2)) };
 }
 
-run(workerData).then((r) => parentPort.postMessage({ ok: true, r }), (e) => parentPort.postMessage({ ok: false, error: e && e.message ? e.message : String(e) }));
+// As a worker it runs at once; required as a module (merge-core.js) it only exports `run`.
+if (parentPort && workerData && workerData.base) {
+  run(workerData).then((r) => parentPort.postMessage({ ok: true, r }), (e) => parentPort.postMessage({ ok: false, error: e && e.message ? e.message : String(e) }));
+}
+
+module.exports = { run };

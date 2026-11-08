@@ -1,7 +1,7 @@
 {
   "name": "chimpanze-wallpapers",
   "productName": "Chimpanzé Wallpapers",
-  "version": "1.5.9",
+  "version": "1.6.0",
   "description": "Wallpapers por monitor com transições motion, upscaling 4K e edição de imagem estática.",
   "author": "João Victor de Macedo",
   "main": "electron/main.js",

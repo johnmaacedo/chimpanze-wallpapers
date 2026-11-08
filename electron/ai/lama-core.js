@@ -98,8 +98,10 @@ async function fillRegion(sharp, rgb, W, H, maskFull, box, onStep, grow = 2.2) {
     maskFull.copy(cmask, y * cw, (y0 + y) * W + x0, (y0 + y) * W + x0 + cw);
   }
   const rgb512 = await sharp(crop, { raw: { width: cw, height: ch, channels: 3 } }).resize(SIZE, SIZE, { fit: 'fill', kernel: 'lanczos3' }).raw().toBuffer();
-  // Mask: grow a few pixels (covers anti-aliased watermark edges), then resize.
-  const grown = await sharp(cmask, { raw: { width: cw, height: ch, channels: 1 } }).dilate(Math.max(2, Math.round(cw / 256))).extractChannel(0).raw().toBuffer();
+  // Mask: grow a few pixels (covers anti-aliased watermark edges), then resize. libvips treats
+  // black as the foreground, so it is `erode` that grows the white mask (`dilate` shrank it,
+  // leaving the edge of what was painted over outside the fill).
+  const grown = await sharp(cmask, { raw: { width: cw, height: ch, channels: 1 } }).erode(Math.max(2, Math.round(cw / 256))).extractChannel(0).raw().toBuffer();
   const m512 = await sharp(grown, { raw: { width: cw, height: ch, channels: 1 } }).resize(SIZE, SIZE, { fit: 'fill', kernel: 'nearest' }).extractChannel(0).raw().toBuffer();
   onStep && onStep();
   const out512 = await run512(rgb512, m512);
