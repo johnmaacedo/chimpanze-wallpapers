@@ -1,0 +1,31 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Bancada do piscar (só desenvolvimento)</title>
+<style>html,body{margin:0;background:#000}#c{width:640px;height:1013px;display:block}</style></head>
+<body><canvas id="c"></canvas>
+<script type="module">
+  // Dev only: the real wallpaper Engine on one picture, with the blink and the camera forced,
+  // so a frame can be captured at any moment. window.shot(k, vx, vy, crop) -> JPEG data URL.
+  import { Engine } from './wallpaper/engine.ts';
+  const canvas = document.getElementById('c');
+  const engine = new Engine(canvas);
+  window.engine = engine;
+  const info = await (await fetch('./benchcase/info.json')).json();
+  engine.setSettings({ parallax: true, parallaxBlink: true, parallaxStrength: 1, parallaxMouse: false, kenBurns: false, fit: 'cover' });
+  window.ready = engine.show({ url: './benchcase/orig.jpg', type: 'image', transition: 'fade', duration: 0, easing: 'linear', instant: true, depthUrl: './benchcase/depth.png', plateUrl: './benchcase/plate.jpg', lidsUrl: './benchcase/lids.jpg', analysis: info }).then(() => 'ok');
+  window.shot = (k, cam, crop) => {
+    const e = engine;
+    e.parAmt = 1; e.paused = false;
+    if (e.to) e.to.depthAt = -1e9;
+    e.blinkAmounts = () => (k > 0 ? (info.eyes || []).map(() => k) : []);
+    if (!e.__on) { e.__on = e.blinkOn; }
+    e.blinkOn = (m) => k > 0 && !!m;
+    const pc = e.parCamera.bind(e);
+    if (cam) e.parCamera = () => cam;
+    e.frame(performance.now());
+    e.parCamera = pc;
+    const [x, y, w, h] = crop || [0, 0, canvas.width, canvas.height];
+    const o = document.createElement('canvas'); o.width = w; o.height = h;
+    o.getContext('2d').drawImage(canvas, x, y, w, h, 0, 0, w, h);
+    return o.toDataURL('image/jpeg', 0.9);
+  };
+</script></body></html>

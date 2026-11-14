@@ -34,12 +34,16 @@ const SETUP_VERSION = 1;
 const FILES = [
   { name: 'ComfyUI_windows_portable_nvidia.7z', size: 2054382457, url: 'https://github.com/Comfy-Org/ComfyUI/releases/download/v0.44.0/ComfyUI_windows_portable_nvidia.7z', to: null },
   { name: 'ComfyUI-GGUF.zip', size: 0, url: 'https://github.com/city96/ComfyUI-GGUF/archive/6ea2651e7df66d7585f6ffee804b20e92fb38b8a.zip', to: null },
-  { name: 'flux1-fill-dev-Q6_K.gguf', size: 9860932896, url: 'https://huggingface.co/YarvixPA/FLUX.1-Fill-dev-GGUF/resolve/main/flux1-fill-dev-Q6_K.gguf', to: 'unet' },
-  { name: 't5xxl_fp8_e4m3fn_scaled.safetensors', size: 5157348688, url: 'https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp8_e4m3fn_scaled.safetensors', to: 'text_encoders' },
-  { name: 'clip_l.safetensors', size: 246144152, url: 'https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors', to: 'text_encoders' },
-  { name: 'ae.safetensors', size: 335304388, url: 'https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors', to: 'vae' },
+  // FLUX.3 klein (Black Forest Labs, 5.6B, 16-step distilled; FLUX community licence = personal use),
+  // as redistributed by unsloth. An EDIT model: it sees the whole picture and redraws it wider,
+  // unlike FLUX.1 Fill (1.6.0), which only filled holes and kept copying the character.
+  { name: 'flux-3-image-klein-Q8_0.gguf', size: 6092755872, url: 'https://huggingface.co/unsloth/flux-3-image-klein-GGUF/resolve/main/flux-3-image-klein-Q8_0.gguf', to: 'unet' },
+  { name: 'flux-3-image-klein-text_encoder-INT8-ConvRot.safetensors', size: 5247076320, url: 'https://huggingface.co/unsloth/flux-3-image-klein-FP8/resolve/main/flux-3-image-klein-text_encoder-INT8-ConvRot.safetensors', to: 'text_encoders' },
+  { name: 'flux3-klein-vae.safetensors', size: 336213556, url: 'https://huggingface.co/unsloth/flux-3-image-klein-FP8/resolve/main/vae/diffusion_pytorch_model.safetensors', to: 'vae' },
 ];
 const TOTAL_GB = Math.round(FILES.reduce((s, f) => s + f.size, 0) / 1e9);
+/** Model files of the 1.6.0 engine (FLUX.1 Fill), removed when found: ~15 GB nobody uses any more. */
+const OBSOLETE = [['unet', 'flux1-fill-dev-Q6_K.gguf'], ['text_encoders', 't5xxl_fp8_e4m3fn_scaled.safetensors'], ['text_encoders', 'clip_l.safetensors'], ['vae', 'ae.safetensors']];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const exists = (p) => { try { fs.accessSync(p); return true; } catch (_) { return false; } };
@@ -67,6 +71,11 @@ class LocalAi extends EventEmitter {
     return m;
   }
   installed() { return process.platform === 'win32' && this.missing().length === 0; }
+  /** Frees the disk taken by the old engine's models once the new ones are in place. */
+  dropObsolete() {
+    if (!this.installed()) return;
+    for (const [dir, name] of OBSOLETE) { const f = path.join(MODELS, dir, name); if (exists(f)) { try { fs.rmSync(f, { force: true }); log.info('ia local: modelo antigo removido', name); } catch (_) { /* in use */ } } }
+  }
   status() {
     return {
       installed: this.installed(), installing: this.state.installing, running: !!this.proc, busy: this.state.busy,
@@ -240,123 +249,42 @@ class LocalAi extends EventEmitter {
 
   // --- expansion ------------------------------------------------------------------------
   /**
-   * Picture + mask for FLUX Fill: the picture centred on the wider (or taller) canvas, the new
-   * areas pre-filled with its stretched, blurred edges (helps colours); mask = new areas plus a
-   * soft overlap into the picture. Sizes are multiples of 16 around `pixels` total.
+   * The picture sized for the model and the canvas it will be redrawn on: `aspect` wide (or tall),
+   * about `pixels` in total, sides multiple of 16. FLUX.3 klein gets the picture as a reference
+   * and draws the whole wider scene; the original is put back over it afterwards (merge-core).
    */
-  async prepare(image, aspect, pixels, holeFile = null) {
+  async prepare(image, aspect, pixels) {
     const sharp = require('./img');
-    const m = await sharp(image).metadata();
+    const m = await sharp(image).rotate().metadata();
     const iw = m.width, ih = m.height;
     const wide = aspect >= iw / ih;
     const cw0 = wide ? ih * aspect : iw, ch0 = wide ? ih : iw / aspect;
-    const s = Math.sqrt(pixels / (cw0 * ch0));
-    const W = Math.max(512, Math.round((cw0 * s) / 16) * 16), H = Math.max(512, Math.round((ch0 * s) / 16) * 16);
-    // Picture fitted to the canvas' full height (or width), centred.
+    const k = Math.sqrt(pixels / (cw0 * ch0));
+    const W = Math.max(512, Math.round((cw0 * k) / 16) * 16), H = Math.max(512, Math.round((ch0 * k) / 16) * 16);
     const pw = wide ? Math.round((iw / ih) * H) : W, ph = wide ? H : Math.round((ih / iw) * W);
-    const px = Math.round((W - pw) / 2), py = Math.round((H - ph) / 2);
-    const pic = await sharp(image).resize(pw, ph, { fit: 'fill', kernel: 'lanczos3' }).removeAlpha().raw().toBuffer();
-    const canvas = Buffer.alloc(W * H * 3);
-    for (let y = 0; y < H; y++) {
-      const sy = Math.min(ph - 1, Math.max(0, y - py));
-      for (let x = 0; x < W; x++) {
-        const sx = Math.min(pw - 1, Math.max(0, x - px)); // edge stretch outside the picture
-        const s3 = (sy * pw + sx) * 3, d = (y * W + x) * 3;
-        canvas[d] = pic[s3]; canvas[d + 1] = pic[s3 + 1]; canvas[d + 2] = pic[s3 + 2];
-      }
-    }
-    // Blur only the new areas (the stretched streaks), keep the picture sharp.
-    const blurred = await sharp(canvas, { raw: { width: W, height: H, channels: 3 } }).blur(Math.max(8, W / 60)).raw().toBuffer();
-    const ov = Math.max(16, Math.round((wide ? W : H) * 0.02)); // soft overlap into the picture
-    // Where people were taken out (empty scene): near the expanded edges that part is repainted
-    // too, so the smooth fill there is not continued outwards as a smudge.
-    const hole = holeFile ? await sharp(holeFile).resize(pw, ph, { fit: 'fill' }).extractChannel(0).raw().toBuffer() : null;
-    const near = Math.round((wide ? pw : ph) * 0.15);
-    const mask = Buffer.alloc(W * H);
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-      const inside = Math.min(x - px, px + pw - 1 - x, y - py, py + ph - 1 - y); // < 0 = new area
-      const edge = wide ? Math.min(x - px, px + pw - 1 - x) : Math.min(y - py, py + ph - 1 - y); // to an expanded edge
-      const k = y * W + x;
-      if (inside < 0) {
-        mask[k] = 255;
-        for (let c = 0; c < 3; c++) canvas[k * 3 + c] = blurred[k * 3 + c];
-        continue;
-      }
-      let v = inside < ov && edge < ov ? Math.round(255 * (1 - edge / ov) * 0.85) : 0;
-      if (hole && edge < near && hole[(y - py) * pw + (x - px)] > 127) v = Math.max(v, edge < near * 0.7 ? 255 : Math.round(255 * (1 - (edge - near * 0.7) / (near * 0.3))));
-      mask[k] = v;
-    }
-    const tag = crypto.randomBytes(4).toString('hex');
-    const imgFile = path.join(ROOT, 'in', `cw-${tag}.png`), maskFile = path.join(ROOT, 'in', `cw-${tag}-mask.png`);
+    const imgFile = path.join(ROOT, 'in', `cw-${crypto.randomBytes(4).toString('hex')}.png`);
     await fsp.mkdir(path.dirname(imgFile), { recursive: true });
-    await sharp(canvas, { raw: { width: W, height: H, channels: 3 } }).png().toFile(imgFile);
-    await sharp(mask, { raw: { width: W, height: H, channels: 1 } }).png().toFile(maskFile);
-    return { W, H, wide, ov, rect: { x: px, y: py, w: pw, h: ph }, imgName: path.basename(imgFile), maskName: path.basename(maskFile), files: [imgFile, maskFile] };
+    await sharp(image).rotate().resize(pw, ph, { fit: 'fill', kernel: 'lanczos3' }).removeAlpha().png().toFile(imgFile);
+    return { W, H, wide, imgName: path.basename(imgFile), files: [imgFile] };
   }
 
-  /**
-   * 0..1: how much the generated picture looks like a collage of panels instead of one scene.
-   * FLUX Fill sometimes treats the original as one panel and draws other "photos" beside it,
-   * split by a straight line or a white/black band right at the original's edge. Measured as the
-   * share of rows with a strong jump across a column, for the columns around each expanded edge
-   * (a real scene rarely has one straight cut along almost the whole height exactly there).
-   */
-  async panelScore(png, prep) {
-    const sharp = require('./img');
-    // Work "vertical seams" oriented: a tall expansion is rotated first.
-    let img = sharp(png).removeAlpha().greyscale();
-    if (!prep.wide) img = img.rotate(90);
-    const { data: g, info } = await img.raw().toBuffer({ resolveWithObject: true });
-    const W = info.width, H = info.height;
-    const r = prep.wide ? prep.rect : { x: prep.H - prep.rect.y - prep.rect.h, y: prep.rect.x, w: prep.rect.h, h: prep.rect.w };
-    let worst = 0;
-    const scan = (x0, x1) => {
-      for (let x = Math.max(2, x0); x < Math.min(W - 2, x1); x++) {
-        let jumps = 0;
-        for (let y = 0; y < H; y++) { const i = y * W + x; if (Math.abs(g[i + 2] - g[i - 2]) > 30) jumps++; }
-        worst = Math.max(worst, jumps / H);
-      }
-    };
-    const reach = Math.max(8, Math.round(Math.min(r.x, W - r.x - r.w) * 0.25));
-    if (r.x > 4) scan(r.x - reach, r.x + prep.ov);
-    if (r.x + r.w < W - 4) scan(r.x + r.w - prep.ov, r.x + r.w + reach);
-    return worst;
-  }
-
-  workflow({ imgName, maskName, prompt, steps, seed }) {
+  workflow({ imgName, W, H, prompt, steps, seed }) {
     return {
-      1: { class_type: 'UnetLoaderGGUF', inputs: { unet_name: 'flux1-fill-dev-Q6_K.gguf' } },
-      2: { class_type: 'DualCLIPLoader', inputs: { clip_name1: 'clip_l.safetensors', clip_name2: 't5xxl_fp8_e4m3fn_scaled.safetensors', type: 'flux' } },
-      3: { class_type: 'VAELoader', inputs: { vae_name: 'ae.safetensors' } },
+      1: { class_type: 'UnetLoaderGGUF', inputs: { unet_name: 'flux-3-image-klein-Q8_0.gguf' } },
+      2: { class_type: 'CLIPLoader', inputs: { clip_name: 'flux-3-image-klein-text_encoder-INT8-ConvRot.safetensors', type: 'flux3', device: 'default' } },
+      3: { class_type: 'VAELoader', inputs: { vae_name: 'flux3-klein-vae.safetensors' } },
       4: { class_type: 'LoadImage', inputs: { image: imgName } },
-      5: { class_type: 'LoadImageMask', inputs: { image: maskName, channel: 'red' } },
       6: { class_type: 'CLIPTextEncode', inputs: { text: prompt, clip: ['2', 0] } },
-      7: { class_type: 'FluxGuidance', inputs: { guidance: 30, conditioning: ['6', 0] } },
       8: { class_type: 'ConditioningZeroOut', inputs: { conditioning: ['6', 0] } },
-      9: { class_type: 'InpaintModelConditioning', inputs: { positive: ['7', 0], negative: ['8', 0], vae: ['3', 0], pixels: ['4', 0], mask: ['5', 0], noise_mask: true } },
-      10: { class_type: 'DifferentialDiffusion', inputs: { model: ['1', 0] } },
-      11: { class_type: 'KSampler', inputs: { model: ['10', 0], positive: ['9', 0], negative: ['9', 1], latent_image: ['9', 2], seed, steps, cfg: 1, sampler_name: 'euler', scheduler: 'normal', denoise: 1 } },
+      9: { class_type: 'ReferenceMultiLatent', inputs: { positive: ['6', 0], negative: ['8', 0], vae: ['3', 0], 'images.image0': ['4', 0], resolution: 'keep resolution' } },
+      10: { class_type: 'EmptyFlux2LatentImage', inputs: { width: W, height: H, batch_size: 1 } },
+      11: { class_type: 'KSampler', inputs: { model: ['1', 0], positive: ['9', 0], negative: ['9', 1], latent_image: ['10', 0], seed, steps, cfg: 1, sampler_name: 'euler', scheduler: 'simple', denoise: 1 } },
       12: { class_type: 'VAEDecode', inputs: { samples: ['11', 0], vae: ['3', 0] } },
       13: { class_type: 'SaveImage', inputs: { images: ['12', 0], filename_prefix: 'cw_expand' } },
     };
   }
 
-  /** The picture without its people (plate-worker.js) → { file, people, hole, by }. */
-  makePlate(image) {
-    return new Promise((resolve, reject) => {
-      const { Worker } = require('worker_threads');
-      const out = path.join(ROOT, 'in', `cw-plate-${crypto.randomBytes(4).toString('hex')}.png`);
-      fs.mkdirSync(path.dirname(out), { recursive: true });
-      const w = new Worker(path.join(__dirname, 'plate-worker.js'), {
-        workerData: { image, out },
-        env: { ...process.env, CW_SEG_MODEL: this.resource('models', 'anime-seg-isnetis.onnx'), CW_LAMA_MODEL: this.resource('models', 'lama.onnx') },
-      });
-      w.once('message', (m) => { w.terminate(); if (m.ok) resolve(m.r); else reject(new Error(m.error)); });
-      w.once('error', reject);
-    });
-  }
-
-  /** One FLUX Fill run on the ComfyUI server; returns the PNG bytes. */
+  /** One run on the ComfyUI server; returns the PNG bytes. */
   async generate(job, prep, prompt, steps, seed) {
     const clientId = crypto.randomUUID();
     // Progress over the websocket (sampling steps); the model load before it has no percentage.
@@ -376,7 +304,7 @@ class LocalAi extends EventEmitter {
       } catch (_) { /* no websocket: poll only */ }
     });
     finished.catch(() => {}); // a late rejection after the poll finished must not go unhandled
-    if (!this.state.progress) this.set({ stage: 'Carregando o modelo FLUX Fill (na primeira vez demora mais)…' });
+    if (!this.state.progress) this.set({ stage: 'Carregando o modelo (na primeira vez demora mais)…' });
     try {
       const res = await fetch(this.url('/prompt'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: this.workflow({ ...prep, prompt, steps, seed }), client_id: clientId }) });
       const body = await res.json().catch(() => ({}));
@@ -420,55 +348,32 @@ class LocalAi extends EventEmitter {
     clearTimeout(this.idleTimer);
     this.set({ busy: true, error: '', stage: 'Ligando o motor da IA local…', progress: undefined });
     let prep = null;
-    let plate = null;
     try {
-      // The empty scene is made while the engine starts (both take ~20 s).
-      const plating = this.makePlate(opts.image).catch((err) => { log.warn('ia local: cenário vazio falhou, usando a imagem', err.message); return null; });
       await this.start();
       if (job.canceled) throw new Error('cancelado');
-      this.set({ stage: 'Tirando as pessoas da cena (para a IA não copiar ninguém)…' });
-      plate = await plating;
-      if (job.canceled) throw new Error('cancelado');
-      const empty = !!(plate && plate.file !== opts.image);
-      log.info('ia local: cenário vazio', plate ? JSON.stringify({ pessoas: plate.people, buraco: plate.hole, por: plate.by }) : 'falhou');
       this.set({ stage: 'Preparando a imagem…' });
-      prep = await this.prepare(empty ? plate.file : opts.image, Number(opts.aspect) || 16 / 9, best ? 2.0e6 : 1.3e6, empty ? plate.holeFile : null);
+      const aspect = Number(opts.aspect) || 16 / 9;
+      prep = await this.prepare(opts.image, aspect, best ? 1.45e6 : 1.0e6);
       const hint = String(opts.hint || '').trim().slice(0, 400);
-      // FLUX Fill ignores negative prompts, so everything is said as what the picture IS: one single
-      // continuous shot (large outpaint areas otherwise tend to become a collage of panels).
+      const sides = prep.wide ? 'to the left and right' : 'above and below';
       const prompt = [
-        'One single continuous wide-angle photograph of one scene, seamlessly extended beyond the original frame.',
-        'The same place continues naturally: the same walls, floor, furniture style, lighting, shadows, haze and colour grading, the same camera perspective and lens, the same depth of field and the same rendering style.',
+        `Extend <ref_image_0> to a ${prep.wide ? 'wider' : 'taller'} frame.`,
+        'Keep the character and everything in the picture exactly as it is, centred, same scale, same pose.',
+        `Continue the scenery naturally ${sides} in the same art style, lighting, colours and perspective.`,
         hint ? `The scene: ${hint}.` : '',
-        empty
-          ? 'An empty place with nobody in it: only the surroundings, furniture and background objects.'
-          : 'The only people in the picture are the ones already in the middle; the extended areas show only the empty surroundings and background objects.',
-        'A single image, not a collage: no panels, no split screen, no frames, no borders, no text, no logos, no signatures and no watermarks.',
-        'Highly detailed, coherent, realistic textures.',
+        'Do not add any new people or characters, no text, no borders, no frames, no watermarks.',
       ].filter(Boolean).join(' ');
-      const steps = best ? 28 : 20;
+      const steps = best ? 16 : 10;
       const t0 = Date.now();
-      // Up to 3 tries: a picture that came out as a collage of panels is drawn again with another seed.
-      let pick = null;
-      for (let attempt = 1; attempt <= 3 && !job.canceled; attempt++) {
-        const img = await this.generate(job, prep, prompt, steps, Math.floor(Math.random() * 2 ** 31));
-        const score = await this.panelScore(img, prep);
-        log.info('ia local: tentativa', attempt, 'colagem', score.toFixed(3));
-        if (!pick || score < pick.score) pick = { img, score };
-        if (score < 0.5) break;
-        if (attempt < 3) this.set({ stage: `A IA desenhou uma moldura/colagem em vez do cenário; tentando de novo (${attempt + 1}/3)…`, progress: undefined });
-      }
-      if (job.canceled || !pick) throw new Error('cancelado');
+      const img = await this.generate(job, prep, prompt, steps, Math.floor(Math.random() * 2 ** 31));
+      if (job.canceled) throw new Error('cancelado');
       const file = this.workFile();
-      await fsp.writeFile(file, pick.img);
-      log.info('ia local: expansão pronta', `${prep.W}x${prep.H}`, `${steps} passos`, `${Date.now() - t0} ms`, 'colagem', pick.score.toFixed(3));
+      await fsp.writeFile(file, img);
+      log.info('ia local: expansão pronta', `${prep.W}x${prep.H}`, `${steps} passos`, `${Date.now() - t0} ms`);
       this.set({ busy: false, stage: '', progress: undefined });
-      // `place`: where the picture sits in the result (the merge skips the search: with the
-      // empty scene in the middle, the people would not match anything there).
-      return {
-        file, width: prep.W, height: prep.H, place: prep.rect, panel: +pick.score.toFixed(3),
-        warning: pick.score >= 0.5 ? 'A IA insistiu em desenhar uma moldura nas laterais. Confira o resultado ou tente de novo.' : '',
-      };
+      // No `place`: the model redraws the whole scene (the character may shift a little), so the
+      // merge finds the original inside the result by itself, as it does for ChatGPT.
+      return { file, width: prep.W, height: prep.H, warning: '' };
     } catch (err) {
       const canceled = job.canceled || /cancelad/i.test(err.message);
       if (!canceled) log.error('ia local: expansão falhou', err);
@@ -476,7 +381,6 @@ class LocalAi extends EventEmitter {
       throw canceled ? new Error('cancelado') : err;
     } finally {
       if (prep) for (const f of prep.files) fsp.rm(f, { force: true }).catch(() => {});
-      if (plate && plate.file !== opts.image) for (const f of [plate.file, plate.holeFile]) if (f) fsp.rm(f, { force: true }).catch(() => {});
       if (this.job === job) this.job = null;
       this.armIdle();
     }

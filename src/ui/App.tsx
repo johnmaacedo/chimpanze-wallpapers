@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion, MotionConfig } from 'motion/react';
+import { GLIDE, SNAP } from './motion';
+import { Logo } from './components/Logo';
 import {
   MonitorSmartphone, Images, Palette, Sparkles, Settings2, Minus, Square, X, PanelBottomClose, Eye, Pause, Play,
   CheckCircle2, AlertTriangle, XCircle, Info, ListTodo, SkipForward, Maximize2, FolderOpen,
@@ -29,22 +31,44 @@ export function App() {
 
 function Shell() {
   const { state, sched, newMonitor } = useStore();
-  const [page, setPage] = useState<Page>('monitors');
+  const [page, setPageRaw] = useState<Page>('monitors');
+  // Pages slide in the direction of the menu (down the list = from the right), like macOS panes.
+  const ORDER: Page[] = ['monitors', 'gallery', 'editor', 'upscale', 'settings'];
+  const [dir, setDir] = useState(1);
+  const setPage = (p: Page) => { setDir(ORDER.indexOf(p) >= ORDER.indexOf(page) ? 1 : -1); setPageRaw(p); };
+  /** Flips on every maximize/restore so the content replays its "settle" animation. */
+  const [settle, setSettle] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
   const [compact, setCompact] = useState(false);
   const [maximized, setMaximized] = useState(false);
   const [leaving, setLeaving] = useState<null | 'hide' | 'min'>(null);
   const [peek, setPeek] = useState(false);
   const [editImage, setEditImage] = useState<string | null>(null);
+  /** Tool the Editor should open on (set by the Galeria actions) and where the picture came from. */
+  const [editTool, setEditTool] = useState<string | null>(null);
+  const [editFrom, setEditFrom] = useState<'gallery' | null>(null);
+  /** Picture the Upscale page should open with (sent by the Galeria). */
+  const [upFile, setUpFile] = useState<string | null>(null);
 
   useEffect(() => {
     return api.on('window', (w: any) => {
       if ('compact' in w) setCompact(!!w.compact);
-      if ('maximized' in w) setMaximized(!!w.maximized);
+      if ('maximized' in w) { setMaximized(!!w.maximized); setSettle((n) => n + 1); }
       if (w.shown) setLeaving(null);
     });
   }, []);
   useEffect(() => { if (state) setCompact(state.compact); }, [!!state]);
+  // Theme: 'cocoa' is the stylesheet's default; the others override its tokens.
+  const theme = state?.config.global.theme || 'cocoa';
+  const firstTheme = useRef(true);
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === 'cocoa') delete root.dataset.theme; else root.dataset.theme = theme;
+    if (firstTheme.current) { firstTheme.current = false; return; }
+    root.classList.add('theme-fade');
+    const t = setTimeout(() => root.classList.remove('theme-fade'), 520);
+    return () => clearTimeout(t);
+  }, [theme]);
   useEffect(() => {
     if (!state) return;
     if (!selected || (!state.monitors.some((m) => m.id === selected) && !state.offline.some((o) => o.id === selected))) {
@@ -54,9 +78,11 @@ function Shell() {
   useEffect(() => { if (newMonitor) { setPage('monitors'); setSelected(newMonitor.id); } }, [newMonitor]);
   // "Retocar no Editor" (result of an expansion) opens that picture in the Editor.
   useEffect(() => {
-    const open = (e: Event) => { setEditImage((e as CustomEvent<string>).detail); setPage('editor'); };
+    const open = (e: Event) => { setEditImage((e as CustomEvent<string>).detail); setEditTool(null); setEditFrom(null); setPage('editor'); };
+    const up = (e: Event) => { setUpFile((e as CustomEvent<string>).detail); setPage('upscale'); };
     window.addEventListener('cw-open-editor', open);
-    return () => window.removeEventListener('cw-open-editor', open);
+    window.addEventListener('cw-open-upscale', up);
+    return () => { window.removeEventListener('cw-open-editor', open); window.removeEventListener('cw-open-upscale', up); };
   }, []);
 
   // Hold "P" (outside text fields) to peek at the wallpaper through the window.
@@ -78,12 +104,12 @@ function Shell() {
     setTimeout(() => {
       api.invoke(kind === 'hide' ? 'win:hide' : 'win:minimize');
       setTimeout(() => setLeaving(null), 400);
-    }, 220);
+    }, kind === 'min' ? 260 : 200);
   };
   const toggleCompact = () => api.invoke('win:compact', !compact).then((v) => setCompact(!!v));
 
   if (!state) {
-    return <div className="app-shell" style={{ display: 'grid', placeItems: 'center' }}><motion.img src="./logo.png" width={96} animate={{ scale: [0.95, 1.05, 0.95] }} transition={{ repeat: Infinity, duration: 1.6 }} /></div>;
+    return <div className="app-shell" style={{ display: 'grid', placeItems: 'center' }}><motion.div animate={{ scale: [0.95, 1.05, 0.95] }} transition={{ repeat: Infinity, duration: 1.6 }}><Logo size={96} /></motion.div></div>;
   }
 
   if (compact) return <><CompactView onExpand={toggleCompact} peek={peek} setPeek={setPeek} /><Toasts /></>;
@@ -99,13 +125,15 @@ function Shell() {
 
   return (
     <motion.div
-      className={`app-shell ${maximized ? 'maximized' : ''}`}
-      initial={{ opacity: 0, scale: 0.965, y: 10 }}
-      animate={leaving ? { opacity: 0, scale: leaving === 'min' ? 0.9 : 0.96, y: leaving === 'min' ? 40 : 8 } : { opacity: 1, scale: 1, y: 0 }}
-      transition={{ type: 'spring', stiffness: 320, damping: 30 }}
+      className={`app-shell ${maximized ? 'maximized' : ''} ${settle ? (settle % 2 ? 'settle-a' : 'settle-b') : ''}`}
+      style={{ transformOrigin: '50% 100%' }}
+      initial={{ opacity: 0, scale: 0.94, y: 18 }}
+      // Minimizing shrinks the window down towards the taskbar; closing just eases it away.
+      animate={leaving ? (leaving === 'min' ? { opacity: 0, scale: 0.5, y: 140 } : { opacity: 0, scale: 0.95, y: 10 }) : { opacity: 1, scale: 1, y: 0 }}
+      transition={leaving ? { duration: leaving === 'min' ? 0.26 : 0.2, ease: [0.4, 0, 0.9, 0.6] } : GLIDE}
     >
       <div className="titlebar">
-        <div className="brand"><img src="./logo.png" alt="" />Chimpanzé Wallpapers</div>
+        <div className="brand"><Logo size={24} />Chimpanzé Wallpapers</div>
         <div className="spacer" />
         <div className="tools">
           <button className={`tb-btn ${sched?.globalPaused ? 'on' : ''}`} title={sched?.globalPaused ? 'Retomar trocas' : 'Pausar todas as trocas'} onClick={() => api.invoke('scheduler:pause', !sched?.globalPaused)}>
@@ -122,8 +150,8 @@ function Shell() {
 
       <nav className="nav">
         {nav.map((n) => (
-          <motion.button key={n.id} className={`nav-item ${page === n.id ? 'active' : ''}`} onClick={() => setPage(n.id)} whileTap={{ scale: 0.97 }}>
-            {page === n.id && <motion.span layoutId="nav-pill" className="pill" transition={{ type: 'spring', stiffness: 500, damping: 38 }} />}
+          <motion.button key={n.id} className={`nav-item ${page === n.id ? 'active' : ''}`} onClick={() => setPage(n.id)} whileTap={{ scale: 0.96 }} transition={SNAP}>
+            {page === n.id && <motion.span layoutId="nav-pill" className="pill" transition={GLIDE} />}
             <n.icon size={18} />
             <span>{n.label}</span>
             {n.ai && <span className="ai-dot" title="Com IA" />}
@@ -132,20 +160,24 @@ function Shell() {
         <div className="nav-foot">
           <div className="nav-status">
             <b>{state.monitors.length}</b> monitor(es) ligado(s), <b>{activeCount}</b> com wallpaper do app.
-            {state.offline.length ? <> <b>{state.offline.length}</b> guardado(s) offline.</> : null}
           </div>
         </div>
       </nav>
 
       <main className="main">
-        <AnimatePresence mode="wait">
-          <motion.div key={page} style={{ position: 'absolute', inset: 0 }}
-            initial={{ opacity: 0, y: 12, filter: 'blur(4px)' }} animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }} exit={{ opacity: 0, y: -8, filter: 'blur(4px)' }}
-            transition={{ duration: 0.28, ease: [0.22, 0.8, 0.25, 1] }}>
+        <AnimatePresence custom={dir} initial={false}>
+          <motion.div key={page} className="page-pane" custom={dir}
+            variants={{
+              enter: (d: number) => ({ opacity: 0, x: d * 44, scale: 0.985 }),
+              show: { opacity: 1, x: 0, scale: 1 },
+              exit: (d: number) => ({ opacity: 0, x: d * -44, scale: 0.985, pointerEvents: 'none' as const }),
+            }}
+            initial="enter" animate="show" exit="exit"
+            transition={{ ...GLIDE, opacity: { duration: 0.18, ease: 'easeOut' } }}>
             {page === 'monitors' && <MonitorsPage selected={selected} setSelected={setSelected} />}
-            {page === 'gallery' && <GalleryPage onEdit={(p) => { setEditImage(p); setPage('editor'); }} />}
-            {page === 'editor' && <EditorPage initialPath={editImage} clearInitial={() => setEditImage(null)} />}
-            {page === 'upscale' && <UpscalePage />}
+            {page === 'gallery' && <GalleryPage onEdit={(p, tool) => { setEditImage(p); setEditTool(tool || null); setEditFrom('gallery'); setPage('editor'); }} />}
+            {page === 'editor' && <EditorPage initialPath={editImage} initialTool={editTool} clearInitial={() => { setEditImage(null); setEditTool(null); }} onBack={editFrom === 'gallery' ? () => { setEditFrom(null); setPage('gallery'); } : undefined} />}
+            {page === 'upscale' && <UpscalePage initialFile={upFile} clearInitial={() => setUpFile(null)} />}
             {page === 'settings' && <SettingsPage />}
           </motion.div>
         </AnimatePresence>
@@ -263,7 +295,7 @@ function CompactView({ onExpand, peek, setPeek }: { onExpand: () => void; peek: 
   return (
     <motion.div className="compact-shell" initial={{ opacity: 0, scale: 0.92 }} animate={{ opacity: 1, scale: 1 }} transition={{ type: 'spring', stiffness: 380, damping: 30 }}>
       <div className="compact-head">
-        <img src="./logo.png" width={22} height={22} style={{ borderRadius: 6 }} alt="" />
+        <Logo size={22} />
         <b style={{ fontFamily: 'var(--display)', fontSize: 12 }}>Chimpanzé</b>
         <div className="tools">
           <button className={`tb-btn ${sched?.globalPaused ? 'on' : ''}`} onClick={() => api.invoke('scheduler:pause', !sched?.globalPaused)} title="Pausar ou retomar">

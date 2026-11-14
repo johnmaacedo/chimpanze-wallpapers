@@ -9,6 +9,8 @@ export interface ChatGptImage {
   file: string; via: 'download' | 'clipboard' | 'manual' | 'local'; width: number; height: number;
   /** Original image the edit belongs to. */
   source: string;
+  /** The painted copy that was sent to ChatGPT (its blue shape is how the merge finds the place). */
+  painted?: string;
   /** Wanted aspect ratio (Expandir), 0 = keep. */
   aspect?: number;
   label?: string;
@@ -53,7 +55,7 @@ export function ChatGptResult() {
   const runMerge = async (r: ChatGptImage) => {
     setMerged(null); setMergeError(''); setMergeStage('Juntando com o original…');
     try {
-      const m = await api.invoke<Merged>('expand:merge', { source: r.source, expansion: r.file, aspect: r.aspect, place: r.place, original: r.original });
+      const m = await api.invoke<Merged>('expand:merge', { source: r.source, expansion: r.file, aspect: r.aspect, place: r.place, original: r.original, painted: r.painted });
       if (r.warning) m.warnings = [r.warning, ...m.warnings];
       setMerged(m); setUseMerged(true);
     } catch (err) {
@@ -74,11 +76,13 @@ export function ChatGptResult() {
   const busyMerge = isExpand && !!mergeStage;
   const engine = img?.via === 'local' ? 'IA local' : 'ChatGPT';
 
-  const save = async () => {
+  /** `saveAs`: asks where (folder and name); otherwise next to the original, in _Editado. */
+  const save = async (saveAs: boolean) => {
     if (!img) return;
     const file = showMerged ? merged!.file : img.file;
-    await api.invoke('chatgpt:save', { file, source: img.source, upscale, crop: !showMerged && offAspect && crop ? img.aspect : 0, monitorId: monitorId || null });
-    toast({ kind: 'info', title: upscale ? 'Salvando com upscale 4K…' : 'Salvando…', message: `Vai para ${fileName(img.source)} em _Editado. Acompanhe em Tarefas.` });
+    const id = await api.invoke('chatgpt:save', { file, source: img.source, upscale, crop: !showMerged && offAspect && crop ? img.aspect : 0, monitorId: monitorId || null, saveAs });
+    if (saveAs && !id) return; // canceled the window: keep the result open
+    toast({ kind: 'info', title: upscale ? 'Salvando com upscale 4K…' : 'Salvando…', message: saveAs ? 'Acompanhe em Tarefas.' : `Vai para ${fileName(img.source)} em _Editado. Acompanhe em Tarefas.` });
     setImg(null);
   };
   const openInEditor = () => {
@@ -153,11 +157,14 @@ export function ChatGptResult() {
                 </div>
               </div>
               <div className="grow" />
-              <Btn className="primary" onClick={save} disabled={busyMerge}>{upscale ? <Sparkles size={15} /> : <Save size={15} />} {upscale ? 'Upscale 4K e salvar' : 'Salvar'}</Btn>
+              <div className="cg-foot">
+              <Btn className="primary" onClick={() => save(true)} disabled={busyMerge} title="Abre a janela para escolher a pasta e o nome">{upscale ? <Sparkles size={15} /> : <Save size={15} />} {upscale ? 'Upscale 4K e salvar como…' : 'Salvar como…'}</Btn>
+              <Btn className="sm" onClick={() => save(false)} disabled={busyMerge} title="Salva ao lado do original, na pasta _Editado (o monitor passa a usar esta versão)">Salvar como versão editada do original</Btn>
               <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
                 <Btn className="sm ghost" onClick={openInEditor} disabled={busyMerge}><Pencil size={13} /> Retocar no Editor</Btn>
                 <Btn className="sm ghost" onClick={() => api.invoke('shell:reveal', showMerged ? merged!.file : img.file)}><FolderSearch size={13} /> Mostrar arquivo</Btn>
                 <Btn className="sm ghost" onClick={() => setImg(null)} disabled={busyMerge}><X size={13} /> Descartar</Btn>
+              </div>
               </div>
               {!showMerged && offAspect && !crop && <span className="muted small"><Crop size={11} /> Sem corte, o enquadramento do monitor decide como encaixar.</span>}
             </div>

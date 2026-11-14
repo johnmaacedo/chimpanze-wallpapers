@@ -1,19 +1,20 @@
 import { motion, AnimatePresence } from 'motion/react';
 import { useEffect, useState } from 'react';
-import { X, Pin, Play, Sparkles, FolderSearch, WandSparkles, ChevronLeft, ChevronRight } from 'lucide-react';
+import { X, Pin, Play, Sparkles, FolderSearch, WandSparkles, ChevronLeft, ChevronRight, Expand, Eraser, Crop } from 'lucide-react';
 import { api, useStore, mediaUrl, fmtBytes, type MediaItem } from '../api';
 import { Btn } from './controls';
 import { UpscaleConfirm } from './UpscalePicker';
 import { CutPreview, DepthImageControls } from './DepthImage';
+import { ZoomView } from './ZoomView';
 
-export function Lightbox({ items, index, onClose, onIndex, onEdit }: { items: MediaItem[]; index: number; onClose: () => void; onIndex: (i: number) => void; onEdit?: (path: string) => void }) {
+export function Lightbox({ items, index, onClose, onIndex, onEdit, startCut }: { items: MediaItem[]; index: number; onClose: () => void; onIndex: (i: number) => void; onEdit?: (path: string, tool?: string) => void; startCut?: boolean }) {
   const { state, toast } = useStore();
   const item = items[index];
   const [size, setSize] = useState<{ width: number; height: number } | null>(null);
-  const [cut, setCut] = useState(50);
+
   const [compare, setCompare] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const [cutView, setCutView] = useState(false);
+  const [cutView, setCutView] = useState(!!startCut);
 
   useEffect(() => {
     setSize(null);
@@ -51,17 +52,12 @@ export function Lightbox({ items, index, onClose, onIndex, onEdit }: { items: Me
           {cutView && item.type === 'image' ? (
             <CutPreview file={item.path} image={item.edited || item.upscaled || item.path} />
           ) : compare && item.upscaled ? (
-            <div className="compare" style={{ ['--cut' as any]: `${cut}%`, minHeight: '70vh' }}
-              onMouseMove={(e) => { const r = (e.currentTarget as HTMLDivElement).getBoundingClientRect(); setCut(((e.clientX - r.left) / r.width) * 100); }}>
-              <img src={mediaUrl(item.path)} alt="" />
-              <img className="after" src={mediaUrl(item.upscaled)} alt="" />
-              <div className="handle" />
-              <span className="lab" style={{ left: 12 }}>Original</span>
-              <span className="lab" style={{ right: 12 }}>4K (IA)</span>
-            </div>
+            <ZoomView key={`${item.path}|c`} before={mediaUrl(item.path)} after={mediaUrl(item.upscaled)} labels={['Original', '4K (IA)']} minHeight="74vh" />
           ) : item.type === 'video'
             ? <video key={item.path} src={mediaUrl(item.path)} autoPlay muted loop controls={false} />
-            : <motion.img key={item.path} src={mediaUrl(item.edited || item.upscaled || item.path)} alt="" initial={{ opacity: 0, scale: 1.02 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.4 }} />}
+            : item.type === 'gif'
+              ? <motion.img key={item.path} src={mediaUrl(item.path)} alt="" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4 }} />
+              : <ZoomView key={item.path} before={mediaUrl(item.edited || item.upscaled || item.path)} minHeight="74vh" />}
           <button className="btn icon" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', background: 'rgba(0,0,0,.5)' }} onClick={() => onIndex(Math.max(0, index - 1))} aria-label="Anterior"><ChevronLeft size={18} /></button>
           <button className="btn icon" style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'rgba(0,0,0,.5)' }} onClick={() => onIndex(Math.min(items.length - 1, index + 1))} aria-label="Próxima"><ChevronRight size={18} /></button>
         </div>
@@ -93,9 +89,17 @@ export function Lightbox({ items, index, onClose, onIndex, onEdit }: { items: Me
 
           {item.type === 'image' && (
             <div className="stack" style={{ gap: 8 }}>
-              <Btn className="primary" onClick={upscale}><Sparkles size={15} /> {item.upscaled ? 'Refazer upscale 4K' : 'Upscale para 4K (GPU)'}</Btn>
+              <Btn className="primary" onClick={() => { onClose(); window.dispatchEvent(new CustomEvent('cw-open-upscale', { detail: item.path })); }}><Sparkles size={15} /> {item.upscaled ? 'Refazer upscale (com prévia)' : 'Upscale 4K (com prévia)'}</Btn>
+              <Btn onClick={upscale}>Upscale direto, sem prévia</Btn>
               {item.upscaled && <Btn onClick={() => setCompare((c) => !c)}>{compare ? 'Ver imagem' : 'Comparar antes e depois'}</Btn>}
-              {onEdit && <Btn className="ai" onClick={() => onEdit(item.path)}><WandSparkles size={15} /> Editar imagem</Btn>}
+              {onEdit && (
+                <div className="hub-grid">
+                  <Btn className="ai" onClick={() => onEdit(item.path)}><WandSparkles size={15} /> Editar</Btn>
+                  <Btn onClick={() => onEdit(item.path, 'expand')}><Expand size={15} /> Expandir</Btn>
+                  <Btn onClick={() => onEdit(item.path, 'erase')}><Eraser size={15} /> Borracha</Btn>
+                  <Btn onClick={() => onEdit(item.path, 'crop')}><Crop size={15} /> Recortar</Btn>
+                </div>
+              )}
             </div>
           )}
           <Btn className="ghost sm" onClick={() => api.invoke('shell:reveal', item.path)}><FolderSearch size={14} /> Mostrar no Explorer</Btn>

@@ -457,8 +457,101 @@ function leftoverPaint(img, W, H, rect) {
   return { mask: m, share: n / (W * H) };
 }
 
+/** Paint mask (1 = paint) of a picture shrunk so its long side is `side`. */
+async function paintMaskAt(file, side) {
+  const m = await orientedSize(file);
+  const k = side / Math.max(m.w, m.h);
+  const w = Math.max(8, Math.round(m.w * k)), h = Math.max(8, Math.round(m.h * k));
+  const rgb = await sharp(file, { limitInputPixels: false }).rotate().resize(w, h, { fit: 'fill', kernel: 'nearest' }).flatten({ background: '#000' }).removeAlpha().raw().toBuffer();
+  const mask = new Uint8Array(w * h);
+  let n = 0;
+  for (let i = 0; i < w * h; i++) {
+    const r = rgb[i * 3], g = rgb[i * 3 + 1], b = rgb[i * 3 + 2];
+    if (r < 60 && Math.abs(r - PAINT_RGB[0]) + Math.abs(g - PAINT_RGB[1]) + Math.abs(b - PAINT_RGB[2]) < 110) { mask[i] = 1; n++; }
+  }
+  return { mask, w, h, share: n / (w * h), full: m };
+}
+
+/** Character mask from the packed depth PNG (blue channel = matte), at the same small size. */
+async function matteMaskAt(file, side) {
+  const m = await orientedSize(file);
+  const k = side / Math.max(m.w, m.h);
+  const w = Math.max(8, Math.round(m.w * k)), h = Math.max(8, Math.round(m.h * k));
+  const rgb = await sharp(file).resize(w, h, { fit: 'fill' }).removeAlpha().raw().toBuffer();
+  const mask = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) mask[i] = rgb[i * 3 + 2] > 70 ? 1 : 0;
+  return { mask, w, h };
+}
+
+/** Overlap (intersection / union) of the sent silhouette P, put at rectangle `px` of the expansion, with the expansion's paint Q. */
+function silhouetteIou(P, Q, fq, px) {
+  let inter = 0, uni = 0;
+  for (let j = 0; j < Q.h; j++) {
+    const v = ((j + 0.5) / fq - px.y) / px.h;
+    const pj = v >= 0 && v < 1 ? Math.floor(v * P.h) * P.w : -1;
+    for (let i = 0; i < Q.w; i++) {
+      const q = Q.mask[j * Q.w + i];
+      let p = 0;
+      if (pj >= 0) { const u = ((i + 0.5) / fq - px.x) / px.w; if (u >= 0 && u < 1) p = P.mask[pj + Math.floor(u * P.w)]; }
+      if (p | q) { uni++; if (p & q) inter++; }
+    }
+  }
+  return uni ? inter / uni : 0;
+}
+
 /**
- * opts: { original, expansion, aspect (W/H), out (PNG path), maskOut? (PNG for leftover paint), onStage? }
+ * "Proteger personagem" covers the whole character with paint, so there is no picture left to
+ * match (and ChatGPT is free to redraw the scenery). But the blue silhouette comes back in the
+ * expansion: find where the silhouette that was sent sits in it (scale, a little stretch and
+ * position), coarse to fine. Returns { px (original's rectangle in expansion pixels), iou }.
+ */
+async function placeBySilhouette(expansion, shapeFile, fromMatte) {
+  const E = await orientedSize(expansion);
+  const O = await orientedSize(shapeFile);
+  let best = null;
+  for (const [side, pass] of [[128, 0], [384, 1], [768, 2]]) {
+    const Q = await paintMaskAt(expansion, side);
+    if (Q.share < 0.01) return null;
+    const P = fromMatte ? await matteMaskAt(shapeFile, side) : await paintMaskAt(shapeFile, side);
+    const fq = Q.w / E.w;
+    // Centroid and area of each shape.
+    const stat = (M) => { let n = 0, sx = 0, sy = 0; for (let y = 0; y < M.h; y++) for (let x = 0; x < M.w; x++) if (M.mask[y * M.w + x]) { n++; sx += x + 0.5; sy += y + 0.5; } return n ? { n, cx: sx / n / M.w, cy: sy / n / M.h, share: n / (M.w * M.h) } : null; };
+    const sp = stat(P), sq = stat(Q);
+    if (!sp || !sq) return null;
+    const cell = 1 / fq;
+    let scales, stretches, offs, step;
+    if (pass === 0) {
+      // Same area in both = the scale, give or take (the expansion may cut part of the shape).
+      const s0 = Math.sqrt((sq.share * E.w * E.h) / (sp.share * O.w * O.h));
+      scales = []; for (let k = 0.7; k <= 1.45; k += 0.025) scales.push(s0 * k);
+      stretches = [1]; offs = 8; step = cell;
+    } else {
+      const s0 = best.px.w / O.w, d = pass === 1 ? 0.005 : 0.0025, n = pass === 1 ? 5 : 2;
+      scales = []; for (let k = -n; k <= n; k++) scales.push(s0 * (1 + k * d));
+      const r0 = (best.px.h / O.h) / s0;
+      stretches = pass === 1 ? [0.97, 0.985, 1, 1.015, 1.03].map((r) => r * r0) : [0.995, 1, 1.005].map((r) => r * r0);
+      offs = pass === 1 ? 4 : 2; step = cell;
+    }
+    let top = null;
+    for (const s of scales) for (const r of stretches) {
+      const w = O.w * s, h = O.h * s * r;
+      const bx = pass === 0 ? sq.cx * E.w - sp.cx * w : best.px.x + (best.px.w - w) / 2;
+      const by = pass === 0 ? sq.cy * E.h - sp.cy * h : best.px.y + (best.px.h - h) / 2;
+      for (let dy = -offs; dy <= offs; dy++) for (let dx = -offs; dx <= offs; dx++) {
+        const px = { x: bx + dx * step, y: by + dy * step, w, h };
+        const iou = silhouetteIou(P, Q, fq, px);
+        if (!top || iou > top.iou) top = { px, iou };
+      }
+    }
+    best = top;
+    if (best.iou < (pass === 0 ? 0.5 : 0.7)) return { px: best.px, iou: best.iou };
+  }
+  return { px: { x: Math.round(best.px.x), y: Math.round(best.px.y), w: Math.round(best.px.w), h: Math.round(best.px.h) }, iou: best.iou };
+}
+
+/**
+ * opts: { original, expansion, aspect (W/H), out (PNG path), maskOut? (PNG for leftover paint), onStage?,
+ *         painted? (the painted copy that was sent), matte? (packed depth PNG of the original), overlayOut? }
  * Returns { out, width, height, score, seams: [{ side, cost, shift }], warnings: [], paintMask? }.
  */
 async function merge(opts) {
@@ -468,7 +561,16 @@ async function merge(opts) {
   // not match the people); expansions from ChatGPT are searched.
   const known = opts.place && opts.place.w > 0 && opts.place.h > 0;
   if (!known) stage('Procurando o original dentro da expansão…');
-  const a = known ? { score: 1, px: opts.place } : await align({ base: opts.expansion, layer: opts.original, ignorePaint: true });
+  let a = known ? { score: 1, px: opts.place } : await align({ base: opts.expansion, layer: opts.original, ignorePaint: true });
+  // The character was covered whole ("Proteger"): nothing of the picture is left to match, but
+  // the silhouette is. Place by it and put only the character back, over the new scenery.
+  let character = false;
+  if (!known && a.score < 0.75 && opts.matte && opts.overlayOut && opts.maskOut) {
+    stage('Encaixando pela silhueta pintada…');
+    const s = await placeBySilhouette(opts.expansion, opts.painted || opts.matte, !opts.painted).catch(() => null);
+    if (s && s.iou >= 0.8) { a = { score: s.iou, px: s.px }; character = true; }
+    else if (s) warnings.push(`A silhueta azul voltou diferente da que foi enviada (${Math.round(s.iou * 100)}% igual).`);
+  }
   // Real expansions match at 0.9+; below 0.75 the expansion redrew the scene (or it is another picture).
   if (a.score < 0.75) {
     const e = new Error('Não consegui encaixar o original nesta expansão: a cena mudou demais (enquadramento, móveis ou luz redesenhados) ou é outra imagem. Peça a expansão de novo ou use a IA local.');
@@ -498,6 +600,43 @@ async function merge(opts) {
   for (let y = 0; y < ch; y++) Ofull.copy(O, y * cw * 3, ((y + lay.crop.y) * ow + lay.crop.x) * 3, ((y + lay.crop.y) * ow + lay.crop.x + cw) * 3);
   const left = Math.round(a.px.x * lay.kx) - lay.x0 + lay.crop.x, top = Math.round(a.px.y * lay.ky) - lay.y0 + lay.crop.y;
   let Ec = await expansionOnCanvas(opts.expansion, E, lay.kx, lay.ky, left, top, lay.W, lay.H);
+  if (character) {
+    // Output 1: the expansion alone (the caller fills the blue with LaMa). Output 2: the character,
+    // cut by its matte, as a transparent layer to lay on top afterwards. Laying it first would
+    // leave a blue fringe wherever the matte is soft (hair).
+    stage('Separando a personagem…');
+    const Mt = await sharp(opts.matte).resize(ow, oh, { fit: 'fill' }).removeAlpha().raw().toBuffer();
+    const over = Buffer.alloc(lay.W * lay.H * 4);
+    for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
+      const m = Mt[((y + lay.crop.y) * ow + x + lay.crop.x) * 3 + 2] / 255;
+      const t = Math.min(1, Math.max(0, (m - 0.3) / 0.5));
+      const al = t * t * (3 - 2 * t);
+      if (al <= 0) continue;
+      const s = (y * cw + x) * 3, d = ((y + lay.y0) * lay.W + x + lay.x0) * 4;
+      over[d] = O[s]; over[d + 1] = O[s + 1]; over[d + 2] = O[s + 2]; over[d + 3] = Math.round(al * 255);
+    }
+    // Every bit of paint (ChatGPT softens and re-shades its edge, so take it generously and grow it).
+    const pm = new Float32Array(lay.W * lay.H);
+    let n = 0;
+    for (let i = 0; i < lay.W * lay.H; i++) {
+      const r = Ec[i * 3], g = Ec[i * 3 + 1], b = Ec[i * 3 + 2];
+      if (r < 70 && b > 170 && b - g > 70 && Math.abs(r - PAINT_RGB[0]) + Math.abs(g - PAINT_RGB[1]) + Math.abs(b - PAINT_RGB[2]) < 150) { pm[i] = 1; n++; }
+    }
+    const grow = boxBlur(pm, lay.W, lay.H, Math.max(4, Math.round(Math.min(lay.W, lay.H) * 0.006)), 1);
+    const mask = Buffer.alloc(lay.W * lay.H);
+    let uncovered = 0;
+    for (let i = 0; i < mask.length; i++) { if (grow[i] > 0.02) { mask[i] = 255; if (over[i * 4 + 3] < 128) uncovered++; } }
+    stage('Salvando…');
+    await sharp(Ec, { raw: { width: lay.W, height: lay.H, channels: 3 } }).png({ compressionLevel: 3 }).toFile(opts.out);
+    await sharp(over, { raw: { width: lay.W, height: lay.H, channels: 4 } }).png({ compressionLevel: 3 }).toFile(opts.overlayOut);
+    await sharp(mask, { raw: { width: lay.W, height: lay.H, channels: 1 } }).png().toFile(opts.maskOut);
+    if (uncovered / mask.length > 0.04) warnings.push('Sobrou uma faixa larga de azul em volta da personagem; ela foi preenchida por IA. Confira no zoom.');
+    return {
+      out: opts.out, width: lay.W, height: lay.H, score: +a.score.toFixed(3), mode: 'character',
+      original: { x: lay.x0, y: lay.y0, w: cw, h: ch }, crop: lay.crop, seams: [], warnings,
+      paintMask: opts.maskOut, overlay: opts.overlayOut, paintShare: +(n / mask.length).toFixed(4),
+    };
+  }
   const bandW = Math.max(24, Math.min(200, Math.round(Math.min(cw, ch) * 0.07), Math.floor((lay.wide ? cw : ch) / 4)));
   stage('Igualando as cores…');
   const fit = matchExpansion(Ec, O, lay, cw, ch, bandW);
@@ -554,4 +693,4 @@ async function merge(opts) {
   };
 }
 
-module.exports = { merge, isPaint, _test: { layout, verticalSeam, blendChannel, pushPull, fitGainOffset, transpose, paintShare, leftoverPaint, alignBorder } };
+module.exports = { merge, isPaint, placeBySilhouette, paintMaskAt, _test: { layout, verticalSeam, blendChannel, pushPull, fitGainOffset, transpose, paintShare, leftoverPaint, alignBorder } };

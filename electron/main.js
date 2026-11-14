@@ -42,7 +42,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 }
 
-let config; let shortcuts; let monitors; let hosts; let scheduler; let jobs; let platform; let library; let upscaler; let tools; let lama; let chatgpt; let localAi;
+let config; let shortcuts; let monitors; let hosts; let scheduler; let jobs; let platform; let library; let upscaler; let tools; let lama; let chatgpt; let localAi; let music; let components;
 let mainWin = null;
 let tray = null;
 let quitting = false;
@@ -91,7 +91,10 @@ async function boot() {
 
   scheduler.on('state', (s) => broadcast('scheduler', s));
   scheduler.on('tick', (s) => broadcast('scheduler', s));
-  scheduler.on('displayed', () => broadcast('state', publicState()));
+  scheduler.on('displayed', () => { broadcast('state', publicState()); syncMusic(); });
+  music = new (require('./music').Music)({ config });
+  music.on('status', (st) => broadcast('music', st));
+  setTimeout(() => music.checkAccount(), 3000);
   scheduler.on('error', (e) => broadcast('toast', { kind: 'error', title: monitorName(e.id), message: e.message }));
   jobs.on('job', (j) => broadcast('job', j));
   jobs.on('cleared', () => broadcast('jobs', jobs.list()));
@@ -173,7 +176,40 @@ function syncHosts() {
   for (const m of active) if (!before.has(m.id)) scheduler.activate(m).catch((err) => log.error('activate', err));
 }
 
+/**
+ * Windows sometimes gives the same physical monitor a new device path after it is unplugged
+ * (another port, UID or driver), and each path used to be kept as a different monitor. Now:
+ * a monitor seen for the first time takes the settings of the last disconnected one of the same
+ * model, and remembered entries of a model that is connected (or older copies of the same
+ * model) are dropped. Only one entry per model is kept for a disconnected monitor.
+ */
+function dedupeMonitors(list) {
+  const { edidCode } = require('./monitors');
+  const model = (id) => { const c = edidCode(id); return c ? c.maker + c.product : null; };
+  const online = new Set(list.map((m) => m.id));
+  const all = () => Object.values(config.data.monitors);
+  let changed = false;
+  for (const m of list) {
+    const mine = config.data.monitors[m.id];
+    if (mine && (mine.folder || mine.fixed)) continue;
+    const twin = all().filter((c) => !online.has(c.id) && model(c.id) && model(c.id) === model(m.id) && (c.folder || c.fixed)).sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0))[0];
+    if (!twin) continue;
+    const keep = { id: m.id, lastRect: m.rect, lastSeen: Date.now(), name: m.name };
+    config.data.monitors[m.id] = Object.assign({}, twin, keep);
+    log.info('monitores: mesmo modelo reconectado com outro caminho, configuração aproveitada', twin.id, '->', m.id);
+    changed = true;
+  }
+  const seen = new Set(list.map((m) => model(m.id)).filter(Boolean));
+  for (const c of all().filter((x) => !online.has(x.id)).sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0))) {
+    const k = model(c.id);
+    if (!k) continue;
+    if (seen.has(k)) { delete config.data.monitors[c.id]; changed = true; log.info('monitores: cópia antiga removida', c.name || c.id); } else seen.add(k);
+  }
+  if (changed) config.save();
+}
+
 function onMonitorsChange({ monitors: list, added, removed, forced }) {
+  dedupeMonitors(list);
   for (const m of list) {
     const c = config.monitor(m.id);
     c.name = m.name;
@@ -247,6 +283,11 @@ function startOcclusionWatch() {
         if (g.pauseOnMaximized && info.maximized && inside) occ = true;
       }
       scheduler.setOccluded(m.id, occ);
+      // A fullscreen game or film over the main monitor: the wallpaper's music waits.
+      if (music && musicMonitor() && musicMonitor().id === m.id) {
+        const r = info && info.rect; const t = m.rect;
+        music.setPaused(!!(r && g.pauseOnFullscreen && r.x <= t.x && r.y <= t.y && r.x + r.width >= t.x + t.width && r.y + r.height >= t.y + t.height));
+      }
     }
   }, 1500);
 }
@@ -282,11 +323,18 @@ function createMainWindow() {
     backgroundColor: '#00000000',
     hasShadow: true,
     title: 'Chimpanzé Wallpapers',
-    icon: resource('icon.png'),
+    icon: themeIcon(256),
     webPreferences: { preload: PRELOAD, contextIsolation: true, sandbox: false, spellcheck: false, backgroundThrottling: false },
   });
   mainWin.setMenu(null);
   mainWin.loadURL('cwp://app/index.html');
+  // If the window's page dies (out of memory, GPU reset…) say why in the log and bring it back.
+  mainWin.webContents.on('render-process-gone', (_e, d) => {
+    log.error('janela: a página caiu', d.reason, 'código', d.exitCode);
+    if (d.reason !== 'clean-exit' && mainWin && !mainWin.isDestroyed()) setTimeout(() => { try { mainWin.webContents.reload(); } catch (_) { /* ignore */ } }, 800);
+  });
+  mainWin.webContents.on('unresponsive', () => log.warn('janela: a página parou de responder'));
+  mainWin.webContents.on('responsive', () => log.info('janela: a página voltou a responder'));
   mainWin.once('ready-to-show', () => {
     mainWin.setOpacity(Math.max(0.25, Math.min(1, config.global.uiOpacity || 1)));
     mainWin.show();
@@ -391,8 +439,24 @@ function identifyMonitors() {
 // ---------------------------------------------------------------------------
 // Tray
 
+/** The icon of the current theme (light / dark / brown: John's three versions of the mascot). */
+function themeIcon(size) {
+  const t = (config && config.global.theme) || 'cocoa';
+  const name = t === 'light' ? 'light' : t === 'dark' ? 'dark' : 'cocoa';
+  const img = nativeImage.createFromPath(path.join(__dirname, '..', 'dist', `logo-${name}.png`));
+  if (img.isEmpty()) return nativeImage.createFromPath(resource(size <= 32 ? 'tray.png' : 'icon.png'));
+  return size ? img.resize({ width: size, height: size, quality: 'best' }) : img;
+}
+/** Window, taskbar and tray follow the theme (the .exe / shortcut icon is fixed by Windows: brown). */
+function applyThemeIcon() {
+  try {
+    if (mainWin && !mainWin.isDestroyed()) mainWin.setIcon(themeIcon(256));
+    if (tray && !tray.isDestroyed()) tray.setImage(themeIcon(32));
+  } catch (err) { log.warn('ícone do tema', err.message); }
+}
+
 function createTray() {
-  const img = nativeImage.createFromPath(resource('tray.png'));
+  const img = themeIcon(32);
   tray = new Tray(img.isEmpty() ? nativeImage.createEmpty() : img);
   tray.setToolTip('Chimpanzé Wallpapers');
   tray.on('click', () => showMain());
@@ -426,10 +490,25 @@ function updateTrayMenu() {
   tray.setContextMenu(menu);
 }
 
+/** Plays the music of the wallpaper on the main monitor (or stops, if it has none). */
+/** The monitor whose wallpaper sets the music: the one chosen (global.music.follow), else the main one. */
+function musicMonitor() {
+  const f = (config.global.music || {}).follow;
+  return (f && monitors.monitors.find((x) => x.id === f)) || monitors.monitors.find((x) => x.primary) || monitors.monitors[0] || null;
+}
+function syncMusic() {
+  if (!music || !monitors) return;
+  const m = musicMonitor();
+  const cfg = m ? config.monitor(m.id) : null;
+  music.sync(cfg ? cfg.fixed || cfg.current : null);
+}
+
 function quit() {
   quitting = true;
   app.quit();
 }
+
+app.on('child-process-gone', (_e, d) => { if (d.reason !== 'clean-exit' && d.reason !== 'killed') log.error('processo caiu', d.type, d.name || '', d.reason, 'código', d.exitCode); });
 
 app.on('before-quit', () => {
   quitting = true;
@@ -438,6 +517,7 @@ app.on('before-quit', () => {
   try { if (hosts) hosts.destroyAll(); } catch (_) { /* ignore */ }
   try { if (shortcuts) shortcuts.dispose(); else globalShortcut.unregisterAll(); } catch (_) { /* ignore */ }
   try { if (localAi) localAi.stop(); } catch (_) { /* ignore */ }
+  try { if (music) music.destroy(); } catch (_) { /* ignore */ }
 });
 
 app.on('window-all-closed', (e) => {
@@ -488,7 +568,7 @@ function imageDepthInfo(file) {
   const cuts = require('./ai/depth').CUTS;
   const o = config.image(file);
   const cut = Math.min(cuts.length - 1, o.cut || 0);
-  return { off: o.depth === false, cut, label: cuts[cut], count: cuts.length };
+  return { off: o.depth === false, cut, label: cuts[cut], count: cuts.length, fix: !!o.fix };
 }
 
 // ---------------------------------------------------------------------------
@@ -498,12 +578,14 @@ function setGlobal(patch) {
   const g = config.updateGlobal(patch);
   if (patch && 'startWithWindows' in patch) applyStartup();
   if (patch && 'uiOpacity' in patch && mainWin) mainWin.setOpacity(Math.max(0.25, Math.min(1, g.uiOpacity)));
+  if (patch && 'theme' in patch) applyThemeIcon();
   for (const m of monitors.monitors) {
     const host = hosts.get(m.id);
     if (host) host.setSettings(scheduler.rendererSettings(config.monitor(m.id)));
   }
   if (patch && ('parallax' in patch || 'parallaxBlink' in patch || 'reduceMotion' in patch)) scheduler.refreshDepth();
   if (patch && 'shortcuts' in patch && shortcuts) broadcast('shortcuts', shortcuts.apply());
+  if (patch && 'music' in patch) syncMusic();
   updatePointerTimer();
   broadcast('state', publicState());
   return g;
@@ -586,7 +668,7 @@ async function runShortcut(id, { all }) {
       return;
     }
     case 'parallax': {
-      if (!require('./ai/depth').exists()) { feedback('Profundidade 3D indisponível', 'O modelo de profundidade não está instalado.', 'warn'); return; }
+      if (!require('./ai/depth').exists()) { feedback('Profundidade 3D indisponível', 'Baixe em Ajustes → Recursos de IA.', 'warn'); return; }
       const on = !config.global.parallax;
       setGlobal({ parallax: on });
       feedback(on ? 'Profundidade 3D ligada' : 'Profundidade 3D desligada', on ? 'Os wallpapers ganham movimento em camadas.' : 'Os wallpapers ficam parados (sem parallax).', on ? 'ok' : 'info');
@@ -629,7 +711,7 @@ async function runShortcut(id, { all }) {
         return;
       }
       const depth = require('./ai/depth');
-      if (!depth.exists()) { feedback('Profundidade 3D indisponível', 'O modelo de profundidade não está instalado.', 'warn'); return; }
+      if (!depth.exists()) { feedback('Profundidade 3D indisponível', 'Baixe em Ajustes → Recursos de IA.', 'warn'); return; }
       feedback('Refazendo o recorte…', 'A IA está recortando os personagens de outro jeito.', 'info');
       for (const f of files) {
         const v = ((config.image(f).cut || 0) + 1) % depth.CUTS.length;
@@ -700,7 +782,28 @@ function registerIpc() {
     return r.canceled ? [] : r.filePaths;
   });
 
+  // Optional AI packages (downloaded by the app; the installer only notes what was ticked).
+  components = new (require('./components').Components)();
+  components.on('status', (list) => broadcast('components', list));
+  components.on('installed', (id) => {
+    if (id === 'depth') scheduler.refreshDepth();
+    broadcast('state', publicState());
+    broadcast('toast', { kind: 'ok', title: 'Recurso de IA instalado', message: require('./components').LIST[id].label });
+  });
+  h('components:list', () => components.list());
+  h('components:install', (id) => components.install(id));
+  h('components:remove', (id) => components.remove(id));
+  setTimeout(() => {
+    components.fromInstaller().then((ids) => { if (ids.length) log.info('recursos: baixados a pedido do instalador', ids.join(', ')); }).catch(() => {});
+  }, 4000);
   h('media:list', async (folder, opts) => library.listMediaDetailed(folder, opts || {}));
+  // Galeria: organize the wallpaper folders from the app (copy in, move, Recycle Bin, new folder).
+  const gallery = require('./gallery-ops').create({ config, scheduler, broadcast });
+  h('gallery:add', (folder, files) => gallery.add(folder, files));
+  h('gallery:move', (files, dest) => gallery.move(files, dest));
+  h('gallery:trash', (files) => gallery.trash(files));
+  h('gallery:mkdir', (parent, name) => gallery.mkdir(parent, name));
+  h('gallery:subfolders', (folder) => gallery.subfolders(folder));
   h('media:thumb', async (file) => {
     const t = await library.thumbnail(file);
     return t ? proto.mediaUrl(t) : null;
@@ -708,7 +811,50 @@ function registerIpc() {
   h('media:url', (file) => proto.mediaUrl(file));
   h('media:size', (file) => library.imageSize(file));
   // Per-picture depth: switch the 3D off/on for one wallpaper, and redo its cut.
+  // Music of a wallpaper (YouTube): search, listen, keep.
+  h('music:status', () => music.status());
+  h('music:search', (q) => require('./music').search(String(q || '')));
+  h('music:preview', (t) => { if (t && t.id) music.play(t.id, t.title, null, true); return music.status(); });
+  h('music:stopPreview', () => { music.endPreview(); syncMusic(); return music.status(); });
+  h('music:show', () => { music.show(); return true; });
+  h('music:toggle', () => music.toggle());
+  h('music:seek', (t) => music.seek(t));
+  h('music:login', () => { music.login(); return true; });
+  h('music:account', () => music.checkAccount());
+  h('music:setCat', (files, catId) => {
+    for (const f of [].concat(files || [])) config.setImage(f, { musicCat: catId || undefined });
+    syncMusic();
+    broadcast('state', publicState());
+    return true;
+  });
+  h('music:next', () => { if (music.current && music.current.cat) { const c = music.categories().find((x) => x.id === music.current.cat); const t = c && music.draw(c, music.current.id); if (t) { const { file, cat } = music.current; music.current = null; music.play(t.id, t.title, file, false, cat); } } return music.status(); });
+  h('music:set', (file, t) => {
+    config.setImage(file, { music: t && t.id ? t : undefined });
+    music.endPreview();
+    syncMusic();
+    broadcast('state', publicState());
+    return config.image(file).music || null;
+  });
   h('image:depth', (file) => imageDepthInfo(file));
+  // Own look of one wallpaper (movement preset/strength/speed) and whether its eyes blink.
+  const imageLook = (file) => { const o = config.image(file); return { look: o.look || null, blink: o.blink !== false }; };
+  h('image:look', (file) => imageLook(file));
+  h('image:look:set', (file, patch) => {
+    const p = {};
+    if (patch && 'look' in patch) p.look = patch.look || undefined;
+    if (patch && 'blink' in patch) p.blink = patch.blink ? undefined : false;
+    config.setImage(file, p);
+    // Monitors showing this picture take the new look at once.
+    const key = String(file).toLowerCase();
+    for (const m of monitors.monitors) {
+      const cfg = config.monitor(m.id);
+      const host = hosts.get(m.id);
+      if (host && String(cfg.fixed || cfg.current || '').toLowerCase() === key) host.setSettings(scheduler.rendererSettings(cfg));
+    }
+    if (patch && 'blink' in patch) scheduler.redisplayFile(file);
+    broadcast('state', publicState());
+    return imageLook(file);
+  });
   h('image:depth:set', (file, on) => {
     config.setImage(file, { depth: on ? undefined : false });
     scheduler.redisplayFile(file);
@@ -720,6 +866,30 @@ function registerIpc() {
     const cur = config.image(file).cut || 0;
     const v = mode === 'auto' ? 0 : mode === 'prev' ? (cur + n - 1) % n : typeof mode === 'number' ? Math.max(0, Math.min(n - 1, mode | 0)) : (cur + 1) % n;
     await scheduler.recut(file, v);
+    broadcast('state', publicState());
+    return imageDepthInfo(file);
+  });
+  // "Corrigir recorte à mão": the current cut + the user's corrections, and saving them.
+  h('image:cut:get', async (file) => {
+    const depth = require('./ai/depth');
+    if (!depth.exists()) return null;
+    const shown = scheduler.shownFor(file);
+    const d = await depth.get(shown, config.image(file).cut || 0);
+    const fix = depth.fixFor(shown);
+    return { image: proto.mediaUrl(shown), matte: proto.mediaUrl(d.depth) + '?t=' + Date.now(), fix: fix ? proto.mediaUrl(fix) + '?t=' + Date.now() : null };
+  });
+  // "Clique mágico": the whole object under a click (Segment Anything), as a grey mask.
+  h('image:cut:magic', async (file, points) => {
+    const sam = require('./ai/sam');
+    if (!sam.exists()) throw new Error('O clique mágico não está instalado. Baixe em Ajustes → Recursos de IA.');
+    const r = await sam.segment(scheduler.shownFor(file), points);
+    return { png: new Uint8Array(r.png), share: r.share, score: r.score };
+  });
+  h('image:cut:save', async (file, bytes) => {
+    const depth = require('./ai/depth');
+    depth.saveFix(scheduler.shownFor(file), bytes || null);
+    config.setImage(file, { fix: bytes ? Date.now() : undefined });
+    await scheduler.recut(file, config.image(file).cut || 0);
     broadcast('state', publicState());
     return imageDepthInfo(file);
   });
@@ -744,6 +914,40 @@ function registerIpc() {
   // Upscale
   h('upscale:classify', async (file) => upscaler.classify(file));
   h('upscale:models', () => upscaler.MODELS);
+  h('upscale:plan', () => ({ kinds: upscaler.KINDS, levels: upscaler.LEVELS, plan: upscaler.PLAN, models: upscaler.MODELS }));
+  const upWork = () => { const d = path.join(app.getPath('userData'), 'cache', 'upscale'); fs.mkdirSync(d, { recursive: true }); return d; };
+  const quietCtx = (tag) => ({ progress: (p, s) => broadcast('upscale:test', { tag, progress: p, stage: s || '' }), stage: (s) => broadcast('upscale:test', { tag, stage: s }), onCancel: () => {}, checkCanceled: () => {} });
+  /** "Testar num pedaço": a piece of the picture, upscaled at the size the whole one will have. */
+  h('upscale:test', async (file, overrides) => {
+    const sharp = require('./img');
+    const settings = Object.assign({}, config.global.upscale, overrides || {}, { skipIfLarger: false, format: 'png' });
+    const m = await sharp(file, { limitInputPixels: false }).rotate().metadata();
+    const full = upscaler.computeTarget({ width: m.width, height: m.height }, settings.target || '4k', monitors.monitors);
+    const cw = Math.min(m.width, Math.max(160, Math.round(m.width * 0.36))), ch = Math.min(m.height, Math.max(160, Math.round(m.height * 0.36)));
+    const left = Math.round((m.width - cw) / 2), top = Math.max(0, Math.round(m.height * 0.38 - ch / 2));
+    const dir = upWork();
+    const piece = path.join(dir, `piece-${Date.now().toString(36)}.png`);
+    await sharp(file, { limitInputPixels: false }).rotate().extract({ left, top, width: cw, height: ch }).png({ compressionLevel: 1 }).toFile(piece);
+    const res = await upscaler.upscaleImage(piece, Object.assign(settings, { factor: Math.max(1.01, full.factor) }), quietCtx('test'), { monitors: monitors.monitors, outputDir: path.join(dir, 'out') });
+    return { before: piece, after: res.output, width: res.width, height: res.height, model: res.model, kind: res.kind, level: res.level, strength: res.strength, factor: full.factor };
+  });
+  /** Whole picture into a temporary file: the Upscale page shows it for "Manter" / "Refazer" first. */
+  h('upscale:studio', (file, overrides) => {
+    const settings = Object.assign({}, config.global.upscale, overrides || {}, { skipIfLarger: false });
+    return jobs.add('upscale', path.basename(file), (ctx) => upscaler.upscaleImage(file, settings, ctx, { monitors: monitors.monitors, outputDir: path.join(upWork(), 'studio') }), { file, studio: true });
+  });
+  h('upscale:keep', async (tmp, source) => {
+    const dir = path.join(path.dirname(source), library.UPSCALE_DIR);
+    fs.mkdirSync(dir, { recursive: true });
+    const name = path.parse(source).name;
+    for (const ext of ['.png', '.jpg', '.webp']) fs.rmSync(path.join(dir, name + ext), { force: true });
+    const out = path.join(dir, name + path.extname(tmp));
+    fs.copyFileSync(tmp, out);
+    fs.rmSync(tmp, { force: true });
+    broadcast('media-changed', { folder: path.dirname(source) });
+    return out;
+  });
+  h('upscale:discard', (tmp) => { if (tmp && path.resolve(tmp).startsWith(path.resolve(upWork()))) fs.rmSync(tmp, { force: true }); return true; });
   h('upscale:start', (files, overrides) => {
     const ids = [];
     for (const file of files) {
@@ -772,6 +976,14 @@ function registerIpc() {
     const out = workFile();
     try { await lama.erase(base, maskFile, out); } finally { fs.rmSync(maskFile, { force: true }); }
     return out;
+  });
+  // "Proteger personagem" (Expandir): the character matte of the picture being edited,
+  // as the packed depth PNG (blue channel = how much of each pixel is character).
+  h('editor:characterMask', async (file) => {
+    const depth = require('./ai/depth');
+    if (!depth.exists()) return null;
+    const d = await depth.get(file, 0);
+    return d && d.depth ? proto.mediaUrl(d.depth) : null;
   });
   h('editor:writeTemp', (bytes) => { const f = workFile(); fs.writeFileSync(f, Buffer.from(bytes)); return f; });
   // "Encaixe automático": where the pasted picture sits in the edited one (worker thread).
@@ -827,7 +1039,22 @@ function registerIpc() {
     const meta = await require('./img')(r.filePaths[0]).metadata();
     return { file: r.filePaths[0], via: 'manual', width: meta.width, height: meta.height };
   });
-  h('chatgpt:save', (opts) => jobs.add('upscale', (opts.upscale ? 'ChatGPT + 4K: ' : 'ChatGPT: ') + path.basename(opts.source), async (ctx) => {
+  h('chatgpt:save', async (opts) => {
+    // "Salvar como…": the user picks the folder and the name first (nothing starts if canceled).
+    let saveTo = null;
+    if (opts.saveAs) {
+      const p = path.parse(opts.source);
+      const r = await dialog.showSaveDialog(mainWin, {
+        title: 'Salvar a imagem expandida',
+        defaultPath: path.join(p.dir, `${p.name} (expandido).png`),
+        filters: [{ name: 'PNG (sem perdas)', extensions: ['png'] }, { name: 'JPG', extensions: ['jpg', 'jpeg'] }, { name: 'WebP', extensions: ['webp'] }],
+      });
+      if (r.canceled || !r.filePath) return null;
+      saveTo = r.filePath;
+    }
+    return saveExpansion(opts, saveTo);
+  });
+  const saveExpansion = (opts, saveTo) => jobs.add('upscale', (opts.upscale ? 'ChatGPT + 4K: ' : 'ChatGPT: ') + path.basename(saveTo || opts.source), async (ctx) => {
     let file = opts.file;
     if (opts.crop) {
       ctx.stage('Ajustando a proporção…');
@@ -853,7 +1080,21 @@ function registerIpc() {
       }
     }
     ctx.stage('Salvando…');
-    const out = await require('./chatgpt').saveResult({ file, source: opts.source }, { EDIT_DIR: library.EDIT_DIR });
+    let out;
+    if (saveTo) {
+      const sharp = require('./img');
+      const ext = path.extname(saveTo).toLowerCase();
+      let img = sharp(file, { limitInputPixels: false });
+      img = ext === '.jpg' || ext === '.jpeg' ? img.jpeg({ quality: 95, chromaSubsampling: '4:4:4', mozjpeg: true }) : ext === '.webp' ? img.webp({ quality: 95 }) : img.png({ compressionLevel: 6 });
+      await img.toFile(saveTo);
+      out = saveTo;
+      broadcast('media-changed', { folder: path.dirname(saveTo) });
+      broadcast('toast', { kind: 'ok', title: 'Imagem salva', message: saveTo });
+      // Put on a monitor: the new file itself.
+      if (opts.monitorId) scheduler.display(opts.monitorId, saveTo, {});
+      return { output: out, width: 0, height: 0, model: '', kind: 'chatgpt', skipped: false };
+    }
+    out = await require('./chatgpt').saveResult({ file, source: opts.source }, { EDIT_DIR: library.EDIT_DIR });
     broadcast('media-changed', { folder: path.dirname(opts.source) });
     for (const m of monitors.monitors) {
       const c = config.data.monitors[m.id];
@@ -861,7 +1102,7 @@ function registerIpc() {
       else if (c && (c.current === opts.source || c.fixed === opts.source)) scheduler.display(m.id, opts.source, { noHistory: true });
     }
     return { output: out, width: 0, height: 0, model: '', kind: 'chatgpt', skipped: false };
-  }, { file: opts.source, chatgpt: true }));
+  }, { file: opts.source, chatgpt: true });
   // "Juntar com o original": the untouched original goes back into an expansion (worker
   // thread, merge-core.js); paint that ChatGPT carried into the new areas is then filled by LaMa.
   /** Best unpainted version of the original: the 4K one, the picture itself, or its _Backup copy. */
@@ -878,15 +1119,28 @@ function registerIpc() {
     }
     return source;
   };
-  h('expand:merge', async ({ source, expansion, aspect, place, original: sent }) => {
+  h('expand:merge', async ({ source, expansion, aspect, place, original: sent, painted }) => {
     // `sent`: the exact picture the local AI expanded (with the Editor's crop/adjustments);
     // otherwise (ChatGPT got a painted copy) the best unpainted version of the original.
     const original = sent && fs.existsSync(sent) ? sent : await pickOriginal(source);
-    const out = workFile(); const maskOut = workFile('.mask.png');
+    const out = workFile(); const maskOut = workFile('.mask.png'); const overlayOut = workFile('.over.png');
     const t0 = Date.now();
+    // "Proteger personagem": the expansion comes back with the character as a blue shape. The
+    // merge then needs the character's cut-out (same one the 3D effect uses) to put it back.
+    let matte = null;
+    if (!place) {
+      try {
+        const { paintMaskAt } = require('./merge-core');
+        if ((await paintMaskAt(expansion, 160)).share > 0.03) {
+          const depth = require('./ai/depth');
+          if (depth.exists()) { broadcast('expand:stage', 'Recortando a personagem do original…'); matte = (await depth.get(original, 0)).depth; }
+        }
+      } catch (err) { log.warn('juntar: sem recorte da personagem', err.message); }
+    }
+    const paintedOk = painted && fs.existsSync(painted) ? painted : null;
     const r = await new Promise((resolve, reject) => {
       const { Worker } = require('worker_threads');
-      const w = new Worker(path.join(__dirname, 'merge-worker.js'), { workerData: { original, expansion, aspect: Number(aspect) || 0, place: place || null, out, maskOut } });
+      const w = new Worker(path.join(__dirname, 'merge-worker.js'), { workerData: { original, expansion, aspect: Number(aspect) || 0, place: place || null, out, maskOut, matte, painted: paintedOk, overlayOut } });
       w.on('message', (m) => {
         if (m.stage) { broadcast('expand:stage', m.stage); return; }
         w.terminate();
@@ -894,6 +1148,22 @@ function registerIpc() {
       });
       w.once('error', reject);
     });
+    if (r.mode === 'character') {
+      // Fill what is left of the blue shape with scenery, then lay the original character on top.
+      broadcast('expand:stage', 'Preenchendo atrás da personagem…');
+      let bg = r.out;
+      try { const fixed = workFile(); await lama.erase(r.out, r.paintMask, fixed); bg = fixed; } catch (err) {
+        log.warn('juntar: LaMa falhou atrás da personagem', err.message);
+        r.warnings.push('Não consegui preencher o azul em volta da personagem. Apague o que sobrar com a Borracha no Editor.');
+      }
+      broadcast('expand:stage', 'Colocando a personagem original…');
+      const done = workFile();
+      await require('./img')(bg, { limitInputPixels: false }).composite([{ input: r.overlay }]).png({ compressionLevel: 6 }).toFile(done);
+      for (const f of [r.overlay, r.paintMask, r.out, bg]) if (f !== done) fs.rmSync(f, { force: true });
+      r.out = done; r.paintMask = null;
+      r.warnings.unshift('O cenário veio redesenhado pelo ChatGPT, então só a personagem original foi mantida, por cima do cenário novo.');
+    }
+    fs.rmSync(overlayOut, { force: true });
     if (r.paintMask) {
       broadcast('expand:stage', 'Apagando restos de tinta azul…');
       const fixed = workFile();
@@ -910,9 +1180,10 @@ function registerIpc() {
     log.info('juntar: pronto', path.basename(original), `${r.width}x${r.height}`, 'encaixe', r.score, JSON.stringify(r.seams), `${Date.now() - t0} ms`);
     return { file: r.out, width: r.width, height: r.height, score: r.score, warnings: r.warnings, original };
   });
-  // Local AI expansion (FLUX Fill through the app's own ComfyUI, started only while needed).
+  // Local AI expansion (FLUX.3 klein through the app's own ComfyUI, started only while needed).
   localAi = new (require('./localai').LocalAi)({ resource, workFile });
   localAi.on('status', (st) => broadcast('localai:status', st));
+  setTimeout(() => { try { localAi.dropObsolete(); } catch (_) { /* ignore */ } }, 20000);
   h('localai:status', () => localAi.status());
   h('localai:install', () => localAi.install());
   h('localai:expand', (opts) => localAi.expand(opts));

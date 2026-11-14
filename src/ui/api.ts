@@ -15,7 +15,7 @@ export interface MonitorCfg {
 }
 export interface GlobalCfg {
   startWithWindows: boolean; pauseOnFullscreen: boolean; pauseOnMaximized: boolean; syncWindows: 'onExit' | 'always' | 'never';
-  uiOpacity: number; reduceMotion: boolean; defaultTransition: string; transitionMs: number; easing: string; preferUpscaled: boolean;
+  uiOpacity: number; theme?: 'cocoa' | 'dark' | 'light'; reduceMotion: boolean; defaultTransition: string; transitionMs: number; easing: string; preferUpscaled: boolean;
   /** 0.2–2: how much zoom/blur/spin the transitions use. */
   transitionIntensity: number;
   /** Transitions left out of the random modes. */
@@ -24,7 +24,7 @@ export interface GlobalCfg {
   parallax?: boolean; parallaxStrength?: number; parallaxMouse?: boolean;
   parallaxPreset?: 'auto' | 'anime' | 'landscape' | 'real' | 'custom'; parallaxMotion?: string; parallaxBlink?: boolean; parallaxSpeed?: number; parallaxStyle?: 'orbit' | 'walk' | 'travel' | 'dolly' | 'float' | 'breathe' | 'sway'; parallaxDolly?: number; parallaxFocus?: number; parallaxBlur?: number;
   chatgpt: { autoType?: boolean; autoSend?: boolean; newChat?: boolean };
-  upscale: { mode: string; animeModel: string; photoModel: string; artModel: string; target: string; format: string; gpu: string; skipIfLarger: boolean };
+  upscale: { mode: string; level?: string; fidelity?: number | null; animeModel: string; photoModel: string; artModel: string; target: string; format: string; gpu: string; skipIfLarger: boolean };
   editPresets: { name: string; adj: any }[];
   /** Global keyboard shortcuts (electron/shortcuts.js). */
   shortcuts?: { enabled: boolean; notify: boolean; allWithAlt: boolean; keys: Record<string, string>; off: string[] };
@@ -33,7 +33,7 @@ export interface GlobalCfg {
 export interface SchedState { monitors: Record<string, { nextAt: number; occluded: boolean; error: string; busy: boolean; historySize: number }>; globalPaused: boolean; now: number }
 export interface AppState {
   version: string; platform: string; raisedDesktop: boolean; depthModel?: boolean; monitors: Monitor[]; offline: OfflineMonitor[];
-  config: { global: GlobalCfg; monitors: Record<string, MonitorCfg>; images?: Record<string, { depth?: false; cut?: number }>; migratedFrom?: string };
+  config: { global: GlobalCfg; monitors: Record<string, MonitorCfg>; images?: Record<string, { depth?: false; cut?: number; look?: Record<string, any>; blink?: false; fix?: number; music?: { id: string; title: string; channel?: string; length?: string }; musicCat?: string }>; migratedFrom?: string };
   scheduler: SchedState; compact: boolean; tools: { upscaler: boolean; models: string[] };
   logFile: string | null; migratedFrom: string | null;
 }
@@ -81,7 +81,11 @@ export function useThumb(path: string | null | undefined) {
   }, [path]);
   return url;
 }
-export function mediaUrl(path: string) { return 'cwp://media/' + encodeURIComponent(path); }
+export function mediaUrl(path: string) {
+  // Dev bench (src/bench.html) serves stand-in pictures; the app itself always uses cwp://.
+  const bench = (window as any).__cwBench as ((p: string) => string) | undefined;
+  return bench ? bench(path) : 'cwp://media/' + encodeURIComponent(path);
+}
 
 // --- store -------------------------------------------------------------------
 interface Store {

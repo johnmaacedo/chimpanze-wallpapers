@@ -6,6 +6,7 @@ import { MonitorStage, useCountdown } from '../components/MonitorStage';
 import { Btn, Segmented, SwitchRow, Toggle } from '../components/controls';
 import { DepthImageControls } from '../components/DepthImage';
 import { TransitionPreview } from '../components/TransitionPreview';
+import { MusicBar } from '../components/Music';
 
 const PRESETS = [
   { s: 30, l: '30s' }, { s: 60, l: '1 min' }, { s: 300, l: '5 min' }, { s: 900, l: '15 min' }, { s: 1800, l: '30 min' }, { s: 3600, l: '1 h' }, { s: 10800, l: '3 h' }, { s: 86400, l: '1 dia' },
@@ -39,6 +40,7 @@ export function MonitorsPage({ selected, setSelected }: { selected: string | nul
       </div>
 
       <MonitorStage selected={selected} onSelect={setSelected} />
+      <MusicBar />
 
       <AnimatePresence mode="wait">
         {selected && (

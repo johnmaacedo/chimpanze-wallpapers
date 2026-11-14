@@ -20,18 +20,18 @@ let queue = Promise.resolve();
 let writes = 0;
 
 function modelFile(name) {
-  return app.isPackaged ? path.join(process.resourcesPath, 'models', name) : path.join(__dirname, '..', '..', 'resources', 'models', name);
+  return require('../models').modelPath(name);
 }
 function segPath() {
-  return app.isPackaged ? path.join(process.resourcesPath, 'models', 'anime-seg-isnetis.onnx') : path.join(__dirname, '..', '..', 'resources', 'models', 'anime-seg-isnetis.onnx');
+  return require('../models').modelPath('anime-seg-isnetis.onnx');
 }
 function lamaPath() {
-  return app.isPackaged ? path.join(process.resourcesPath, 'models', 'lama.onnx') : path.join(__dirname, '..', '..', 'resources', 'models', 'lama.onnx');
+  return require('../models').modelPath('lama.onnx');
 }
 const plateFor = (depthFile) => depthFile.replace(/\.png$/i, '.plate.jpg');
 
 function modelPath() {
-  return app.isPackaged ? path.join(process.resourcesPath, 'models', 'depth-anything-v2-small.onnx') : path.join(__dirname, '..', '..', 'resources', 'models', 'depth-anything-v2-small.onnx');
+  return require('../models').modelPath('depth-anything-v2-small.onnx');
 }
 const cacheDir = () => path.join(app.getPath('userData'), 'depth');
 
@@ -46,10 +46,35 @@ const CUTS = [
   'Sem recorte (a imagem se move inteira, suave)',
 ];
 
+/**
+ * Manual corrections of the cut ("Corrigir recorte à mão"): one small PNG per
+ * wallpaper (R = painted as front, G = painted as background), shared by every
+ * version of it (original, _4K, _Editado). Kept outside the cache: it is the
+ * user's work and survives "Refazer recorte" and new versions of the app.
+ */
+function fixDir() { return path.join(app.getPath('userData'), 'cuts'); }
+function fixPath(file) {
+  const dir = path.dirname(path.resolve(file));
+  const sub = path.basename(dir);
+  const home = sub === '_4K' || sub === '_Editado' ? path.dirname(dir) : dir;
+  const key = path.join(home, path.parse(file).name).toLowerCase();
+  return path.join(fixDir(), crypto.createHash('sha1').update(key).digest('hex') + '.png');
+}
+function fixFor(file) { const p = fixPath(file); return fs.existsSync(p) ? p : null; }
+function saveFix(file, bytes) {
+  const p = fixPath(file);
+  if (!bytes) { fs.rmSync(p, { force: true }); return null; }
+  fs.mkdirSync(fixDir(), { recursive: true });
+  fs.writeFileSync(p, Buffer.from(bytes));
+  return p;
+}
+
 function cachePath(file, variant = 0) {
   let st;
   try { st = fs.statSync(file); } catch (_) { return null; }
-  const v = variant > 0 ? `|cut${variant}` : '';
+  let v = variant > 0 ? `|cut${variant}` : '';
+  const fix = fixFor(file);
+  if (fix) { try { v += `|fix${Math.round(fs.statSync(fix).mtimeMs)}`; } catch (_) { /* ignore */ } }
   const key = crypto.createHash('sha1').update(`${VERSION}|${path.resolve(file).toLowerCase()}|${st.size}|${Math.round(st.mtimeMs)}${v}`).digest('hex');
   return path.join(cacheDir(), key.slice(0, 2), key + '.png');
 }
@@ -100,7 +125,7 @@ function runInWorker(image, out, variant) {
   const id = ++seq;
   return new Promise((resolve, reject) => {
     pending.set(id, { resolve, reject });
-    c.postMessage({ id, image, out, variant });
+    c.postMessage({ id, image, out, variant, fix: fixFor(image) });
   });
 }
 
@@ -178,4 +203,4 @@ function get(file, variant = 0) {
   return job;
 }
 
-module.exports = { get, cached, release, modelPath, CUTS, exists: () => fs.existsSync(modelPath()) };
+module.exports = { get, cached, release, modelPath, CUTS, fixFor, saveFix, exists: () => fs.existsSync(modelPath()) };

@@ -1,10 +1,13 @@
-import { motion } from 'motion/react';
 import { useEffect, useRef, useState } from 'react';
-import { Film, Sparkles, BoxSelect, Scissors } from 'lucide-react';
+import { Film, Sparkles, BoxSelect, Scissors, Check, EyeOff, SlidersHorizontal, Music2 } from 'lucide-react';
 import { useThumb, mediaUrl, useStore, type MediaItem } from '../api';
 
 /** Gallery tile — lazy thumbnail; videos/GIFs play on hover. */
-export function Tile({ item, onOpen, current, index }: { item: MediaItem; onOpen: () => void; current?: boolean; index: number }) {
+export function Tile({ item, onOpen, current, index, selected, selecting, onToggle, onMenu }: {
+  item: MediaItem; onOpen: () => void; current?: boolean; index: number;
+  /** Multi-selection (Ctrl/Shift+click, or the round mark). */
+  selected?: boolean; selecting?: boolean; onToggle?: (shift: boolean) => void; onMenu?: (x: number, y: number) => void;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
   const [hover, setHover] = useState(false);
@@ -20,16 +23,14 @@ export function Tile({ item, onOpen, current, index }: { item: MediaItem; onOpen
   const { state } = useStore();
   const dimg = state?.config.images?.[item.path.toLowerCase()];
   return (
-    <motion.div
+    // A plain element (not an animated one): a gallery has hundreds of tiles, and one spring +
+    // layout tracker per tile made opening the Galeria stall. Entrance and hover are CSS only.
+    <div
       ref={ref}
-      className="tile"
-      layout
-      initial={{ opacity: 0, y: 16, scale: 0.97 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ type: 'spring', stiffness: 300, damping: 28, delay: Math.min(index, 24) * 0.018 }}
-      whileHover={{ y: -4 }}
-      whileTap={{ scale: 0.97 }}
-      onClick={onOpen}
+      style={{ ['--i' as any]: Math.min(index, 24) }}
+      className={`tile ${selected ? 'sel' : ''} ${selecting ? 'selecting' : ''}`}
+      onClick={(e) => { if (onToggle && (e.ctrlKey || e.metaKey || e.shiftKey || selecting)) onToggle(e.shiftKey); else onOpen(); }}
+      onContextMenu={(e) => { if (onMenu) { e.preventDefault(); onMenu(e.clientX, e.clientY); } }}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       tabIndex={0}
@@ -45,9 +46,14 @@ export function Tile({ item, onOpen, current, index }: { item: MediaItem; onOpen
         {item.edited && <span className="badge ed">Editado</span>}
         {dimg?.depth === false && <span className="badge d3off" title="Profundidade 3D desligada nesta imagem"><BoxSelect size={10} /> 3D off</span>}
         {dimg?.cut ? <span className="badge cutn" title="Recorte refeito"><Scissors size={10} /> Recorte {dimg.cut}</span> : null}
+        {dimg?.look && <span className="badge look" title="Tem ajustes próprios de movimento"><SlidersHorizontal size={10} /> Próprio</span>}
+        {!dimg?.music && dimg?.musicCat && <span className="badge look" title="Tem categoria de música"><Music2 size={10} /></span>}
+        {dimg?.music && <span className="badge look" title={`Música: ${dimg.music.title}`}><Music2 size={10} /></span>}
+        {dimg?.blink === false && <span className="badge d3off" title="Não pisca nesta imagem"><EyeOff size={10} /></span>}
         {animated && <span className="badge anim"><Film size={10} /> {item.type === 'gif' ? 'GIF' : 'Vídeo'}</span>}
       </div>
+      {onToggle && <button className="tile-mark" title="Selecionar (Ctrl+clique)" onClick={(e) => { e.stopPropagation(); onToggle(e.shiftKey); }}>{selected && <Check size={13} />}</button>}
       <div className="meta ellipsis">{item.name}</div>
-    </motion.div>
+    </div>
   );
 }

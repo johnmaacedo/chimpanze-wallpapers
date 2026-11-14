@@ -128,4 +128,4 @@ function matchDisplay(rect, displays) {
   return bestScore < 64 ? best : null;
 }
 
-module.exports = { MonitorManager, matchDisplay };
+module.exports = { MonitorManager, matchDisplay, edidCode };

@@ -14,8 +14,7 @@ let ort = null;
 
 function modelPath() {
   if (process.env.CW_LAMA_MODEL) return process.env.CW_LAMA_MODEL;
-  const { app } = require('electron');
-  return app.isPackaged ? path.join(process.resourcesPath, 'models', 'lama.onnx') : path.join(__dirname, '..', '..', 'resources', 'models', 'lama.onnx');
+  return require('../models').modelPath('lama.onnx');
 }
 
 async function getSession() {

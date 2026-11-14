@@ -12,8 +12,8 @@ function resourcesBin() {
 
 const exe = (name) => (process.platform === 'win32' ? `${name}.exe` : name);
 
-function upscalerExe() { return path.join(resourcesBin(), 'upscaler', exe('realesrgan-ncnn-vulkan')); }
-function upscalerModels() { return path.join(resourcesBin(), 'upscaler', 'models'); }
+function upscalerExe() { return path.join(require('./models').binDir('upscaler'), exe('realesrgan-ncnn-vulkan')); }
+function upscalerModels() { return path.join(require('./models').binDir('upscaler'), 'models'); }
 function status() {
   const isWin = process.platform === 'win32';
   return {

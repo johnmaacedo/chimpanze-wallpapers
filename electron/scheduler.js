@@ -80,8 +80,18 @@ class Scheduler extends EventEmitter {
     this.emitState();
   }
 
-  rendererSettings(cfg) {
-    const g = this.config.global;
+  /** Settings for a monitor's renderer; the wallpaper on it may bring its own look (config.images[..].look). */
+  rendererSettings(cfg, file) {
+    const g0 = this.config.global;
+    const shown = file || cfg.fixed || cfg.current;
+    const own = shown ? this.config.image(shown) : {};
+    const g = own.look ? Object.assign({}, g0, own.look) : g0;
+    const out = this.rendererSettings0(cfg, g);
+    if (own.blink === false) out.parallaxBlink = false;
+    return out;
+  }
+
+  rendererSettings0(cfg, g) {
     return {
       fit: cfg.fit || 'cover',
       kenBurns: !!cfg.kenBurns && !g.reduceMotion,
@@ -120,7 +130,7 @@ class Scheduler extends EventEmitter {
 
   /** The picture needs no depth map at all (3D off for it and no blinking). */
   noDepthFor(file) {
-    return this.imgDepth(file).off && this.config.global.parallaxBlink === false;
+    return this.imgDepth(file).off && (this.config.global.parallaxBlink === false || this.config.image(file).blink === false);
   }
 
   /** The file actually put on screen for a picture (4K or edited version). */
@@ -330,7 +340,7 @@ class Scheduler extends EventEmitter {
     const send = (d) => {
       const host = this.hosts.get(id);
       if (tok !== s.showToken || !host) return;
-      host.setSettings(this.rendererSettings(cfg));
+      host.setSettings(this.rendererSettings(cfg, file));
       host.show(d ? Object.assign({ depthUrl: mediaUrl(d.depth), plateUrl: mediaUrl(d.plate), lidsUrl: d.lids ? mediaUrl(d.lids) : null, analysis: d.analysis }, msg) : msg);
     };
     if (type === 'image' && this.depthOn() && !this.noDepthFor(file)) {

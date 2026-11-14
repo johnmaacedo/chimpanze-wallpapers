@@ -332,6 +332,9 @@ class Media {
   }
 }
 
+/** Minimum time between frames when nothing but the slow idle animations moves (~60 fps). */
+const IDLE_FRAME_MS = 1000 / 60 - 1.5;
+
 export class Engine {
   private gl: WebGL2RenderingContext;
   private programs = new Map<string, { prog: WebGLProgram; loc: Record<string, WebGLUniformLocation | null> }>();
@@ -590,6 +593,13 @@ export class Engine {
     this.kick();
   }
 
+  /** When the last frame was drawn (the idle animations are capped at ~60 fps). */
+  private lastDrawn = 0;
+  private capTimer: any = 0;
+  /** Minimum time between frames during transitions too (0 = the monitor's full rate). The small
+   *  preview in the app sets ~60 fps: drawing it at 300 Hz kept the GPU at 80%. */
+  maxFrameMs = 0;
+
   kick() {
     if (!this.raf) this.raf = requestAnimationFrame((t) => this.frame(t));
   }
@@ -733,9 +743,20 @@ export class Engine {
   private frame(now: number) {
     this.raf = 0;
     if (!this.to) return;
+    const transitioning = this.transition !== 'idle';
+    // The slow camera loop, Ken Burns and blinks run at most ~60 frames a second: on a 300 Hz
+    // monitor drawing every refresh kept the GPU busy for nothing (the movement looks the same).
+    // Transitions are short and drawn at the monitor's full rate.
+    const minGap = transitioning ? this.maxFrameMs : IDLE_FRAME_MS;
+    if (minGap > 0 && this.firstFrameSent && !this.paused && now - this.lastDrawn < minGap) {
+      // Sleep until the next frame is due instead of waking up on every refresh.
+      clearTimeout(this.capTimer);
+      this.capTimer = setTimeout(() => { this.capTimer = 0; this.kick(); }, Math.max(1, minGap - (now - this.lastDrawn) - 2));
+      return;
+    }
+    this.lastDrawn = now;
     const gl = this.gl;
     this.resize();
-    const transitioning = this.transition !== 'idle';
     let progress = 1;
     if (transitioning) {
       progress = Math.min(1, (now - this.tStart) / this.tDuration);

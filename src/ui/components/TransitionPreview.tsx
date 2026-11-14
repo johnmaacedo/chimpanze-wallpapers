@@ -9,6 +9,7 @@ import { useStore, TRANSITION_LIST } from '../api';
 export function TransitionPreview({ a, b, transition, duration, easing, fit }: { a: string | null; b: string | null; transition: string; duration: number; easing: string; fit: string }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<Engine | null>(null);
+  const visible = useRef(true);
   const { state } = useStore();
   const off = state?.config.global.transitionsOff || [];
   const intensity = state?.config.global.transitionIntensity ?? 1;
@@ -20,8 +21,14 @@ export function TransitionPreview({ a, b, transition, duration, easing, fit }: {
     let engine: Engine;
     try { engine = new Engine(ref.current); } catch { return; }
     engine.reloadOnLoss = false;
+    engine.maxFrameMs = 1000 / 60 - 1.5;
     engineRef.current = engine;
-    return () => { engine.destroy(); engineRef.current = null; };
+    // Off screen (scrolled away) or app in the background: no frames at all.
+    const io = new IntersectionObserver(([e]) => { visible.current = e.isIntersecting; engine.setPaused(!visible.current || document.hidden); }, { threshold: 0.05 });
+    io.observe(ref.current);
+    const onVis = () => engine.setPaused(!visible.current || document.hidden);
+    document.addEventListener('visibilitychange', onVis);
+    return () => { io.disconnect(); document.removeEventListener('visibilitychange', onVis); engine.destroy(); engineRef.current = null; };
   }, []);
 
   useEffect(() => { engineRef.current?.setSettings({ fit: fit as any, kenBurns: false, intensity }); }, [fit, intensity]);
@@ -35,6 +42,8 @@ export function TransitionPreview({ a, b, transition, duration, easing, fit }: {
     engine.show({ url: pics[0], type: 'image', transition: 'idle', duration: 0, easing: 'linear', instant: true });
     const loop = () => {
       if (!alive) return;
+      // Hidden: wait and try again, without starting transitions nobody sees.
+      if (!visible.current || document.hidden) { timer = window.setTimeout(loop, 1000); return; }
       flip = !flip;
       const c = cfgRef.current;
       let name = c.transition;

@@ -7,3 +7,5 @@ out/
 resources/bin/
 resources/models/
 *.exe
+src/benchcase/
+.claude/launch.json

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Bancada da interface (só desenvolvimento)</title>
+  <style>html,body{background:#120c09}</style>
+</head>
+<body>
+  <div id="root"></div>
+  <!-- Dev only: the interface with a fake bridge, to check layouts in a browser without Electron. Not part of the build. -->
+  <script>
+    // Stand-in pictures drawn on a canvas (PNG, so the Editor's decoder accepts them).
+    const svg = (a, b, c, w, h) => {
+      const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+      const x = cv.getContext('2d');
+      const g = x.createLinearGradient(0, 0, 0, h); g.addColorStop(0, a); g.addColorStop(0.6, b); g.addColorStop(1, c);
+      x.fillStyle = g; x.fillRect(0, 0, w, h);
+      x.fillStyle = '#ffffffb0';
+      for (let i = 0; i < 60; i++) { x.beginPath(); x.arc((i * 197) % w, (i * 113) % (h * 0.6), 2 + (i % 4), 0, 7); x.fill(); }
+      x.fillStyle = '#2d1b3d'; x.beginPath(); x.ellipse(w / 2, h, w * 0.16, h * 0.62, 0, 0, 7); x.fill();
+      x.fillStyle = '#f6d9b8'; x.beginPath(); x.arc(w / 2, h * 0.36, h * 0.13, 0, 7); x.fill();
+      x.fillStyle = '#f3c96a'; x.beginPath(); x.arc(w / 2, h * 0.36, h * 0.15, Math.PI, 0); x.fill();
+      x.fillStyle = '#fff'; x.font = (h / 22) + 'px sans-serif'; x.fillText(w + '×' + h, 30, h - 30);
+      return cv.toDataURL('image/png');
+    };
+    // Fake character matte (blue channel) matching the stand-in pictures.
+    const matte = () => { const w = 960, h = 540, cv = document.createElement('canvas'); cv.width = w; cv.height = h; const x = cv.getContext('2d'); x.fillStyle = '#000'; x.fillRect(0, 0, w, h); x.fillStyle = '#0000ff'; x.beginPath(); x.ellipse(w / 2, h, w * 0.16, h * 0.62, 0, 0, 7); x.fill(); x.beginPath(); x.arc(w / 2, h * 0.36, h * 0.15, 0, 7); x.fill(); return cv.toDataURL('image/png'); };
+    const PICS = {
+      'C:/W/ada.png': svg('#2b2350', '#7a3b6b', '#ff8a5c', 1920, 1080),
+      'C:/W/rio.png': svg('#0f2c3d', '#1f6f78', '#9be3c8', 1920, 1080),
+      'C:/W/red.png': svg('#3b0f18', '#8b1e2d', '#f2a65a', 1080, 1920),
+      'C:/W/sky.png': svg('#101a3a', '#3856a8', '#c9d6ff', 2560, 1440),
+    };
+    const pic = (p) => PICS[p] || PICS['C:/W/ada.png'];
+    window.__cwBench = pic;
+    const rect = (x, y, w, h) => ({ x, y, width: w, height: h });
+    const mon = (id, i, name, r, primary, hz) => ({ id, rect: r, index: i, name, primary, scaleFactor: 1, refreshRate: hz, brand: '', model: '', label: name, displayId: i });
+    const mcfg = (id, name, current, fixed) => ({ id, name, alias: '', folder: 'C:/W', includeSubfolders: false, intervalSec: 300, auto: true, order: 'random', transition: 'inherit', transitionMs: 0, easing: 'inherit', fit: 'cover', kenBurns: true, fixed: fixed || '', current, enabled: true, lastRect: null, lastSeen: 0 });
+    const sched = { monitors: { a: { nextAt: Date.now() + 240000, occluded: false, error: '', busy: false, historySize: 3 }, b: { nextAt: 0, occluded: false, error: '', busy: false, historySize: 1 }, c: { nextAt: Date.now() + 90000, occluded: true, error: '', busy: false, historySize: 1 } }, globalPaused: false, now: Date.now() };
+    const state = {
+      version: 'bancada', platform: 'win32', raisedDesktop: true, depthModel: true,
+      monitors: [mon('b', 1, 'Odyssey G7', rect(0, 0, 2560, 1440), true, 165), mon('a', 2, 'LG UltraGear lateral', rect(-1920, 180, 1920, 1080), false, 75), mon('c', 3, 'Dell vertical', rect(2560, -240, 1080, 1920), false, 60)],
+      offline: [],
+      config: {
+        global: { startWithWindows: true, pauseOnFullscreen: true, pauseOnMaximized: false, syncWindows: 'onExit', uiOpacity: 1, reduceMotion: false, defaultTransition: 'random', transitionMs: 1400, easing: 'smooth', preferUpscaled: true, transitionIntensity: 1, transitionsOff: [], parallax: true, parallaxStrength: 1, parallaxMouse: true, parallaxPreset: 'auto', parallaxMotion: 'auto', parallaxBlink: true, parallaxSpeed: 1, parallaxStyle: 'orbit', parallaxDolly: 0.5, parallaxFocus: 0.5, parallaxBlur: 0.3, chatgpt: { autoType: true, autoSend: true, newChat: true }, upscale: { mode: 'auto', animeModel: 'realesrgan-x4plus-anime', photoModel: 'ultrasharp-4x', artModel: 'digital-art-4x', target: '4k', format: 'png', gpu: 'auto', skipIfLarger: true }, editPresets: [], shortcuts: { enabled: true, notify: true, allWithAlt: true, keys: {}, off: [] }, compactCorner: 'br', firstRunDone: true },
+        monitors: { a: mcfg('a', 'LG', 'C:/W/rio.png'), b: mcfg('b', 'Odyssey', 'C:/W/ada.png', 'C:/W/ada.png'), c: mcfg('c', 'Dell', 'C:/W/red.png') }, images: {},
+      },
+      scheduler: sched, compact: false, tools: { upscaler: true, models: [] }, logFile: null, migratedFrom: null,
+    };
+    const items = Object.keys(PICS).map((p) => ({ path: p, name: p.split('/').pop(), type: 'image', size: 2e6, mtime: 0, upscaled: p.endsWith('ada.png') ? 'C:/W/sky.png' : undefined }));
+    const reply = {
+      'config:global': (p) => { Object.assign(state.config.global, p); window.__push && window.__push(); return true; }, state: () => state, 'jobs:list': () => [], 'media:list': () => items, 'media:thumb': (p) => pic(p), 'media:size': () => ({ width: 1920, height: 1080 }),
+      'upscale:models': () => ({ 'realesrgan-x4plus-anime': { label: 'Real-ESRGAN Anime', kind: 'anime' }, 'ultrasharp-4x': { label: '4x-UltraSharp', kind: 'photo' }, 'digital-art-4x': { label: 'Digital Art', kind: 'art' } }),
+      'editor:bestBase': () => null, 'image:look': (f) => { const o = state.config.images[f.toLowerCase()] || {}; return { look: o.look || null, blink: o.blink !== false }; }, 'image:look:set': (f, p) => { const k = f.toLowerCase(); const o = state.config.images[k] = Object.assign({}, state.config.images[k]); if ('look' in p) { if (p.look) o.look = p.look; else delete o.look; } if ('blink' in p) { if (p.blink) delete o.blink; else o.blink = false; } window.__push && window.__push(); return { look: o.look || null, blink: o.blink !== false }; }, 'image:depth:set': (f, on) => { const k = f.toLowerCase(); const o = state.config.images[k] = Object.assign({}, state.config.images[k]); if (on) delete o.depth; else o.depth = false; window.__push && window.__push(); return { off: !on, cut: 0, label: 'Automático', count: 7 }; }, 'editor:characterMask': () => matte(), 'chatgpt:status': () => ({ waiting: false, installed: true }), 'localai:status': () => ({ installed: false, busy: false }), 'image:depth': (f) => ({ off: (state.config.images[f.toLowerCase()] || {}).depth === false, cut: 0, label: 'Automático', count: 7 }),
+    };
+    window.cw = {
+      platform: 'win32',
+      invoke: (c, ...a) => { const f = reply[c]; if (!f) { console.debug('[bancada] sem resposta para', c, a); return Promise.resolve(null); } return Promise.resolve(f(...a)); },
+      send: () => {}, on: (c, cb) => { if (c === 'state') window.__push = () => cb(JSON.parse(JSON.stringify(state))); return () => {}; },
+    };
+  </script>
+  <script type="module" src="./ui/main.tsx"></script>
+</body>
+</html>

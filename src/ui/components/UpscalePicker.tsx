@@ -108,9 +108,10 @@ function PickTile({ item, on, onClick }: { item: MediaItem; on: boolean; onClick
 
 /** Last step before any upscale: what will run, with which settings. */
 export function UpscaleConfirm({ files, onConfirm, onClose }: { files: string[]; onConfirm: () => void; onClose: () => void }) {
-  const { state } = useStore();
+  const { state, setGlobal } = useStore();
   const u = state!.config.global.upscale;
-  const mode = ({ auto: 'Detectar sozinho', anime: 'Anime', photo: 'Foto realista', art: 'Arte digital' } as Record<string, string>)[u.mode] || u.mode;
+  const setU = (patch: Partial<typeof u>) => setGlobal({ upscale: patch });
+  const kind = u.mode === 'art' ? 'render' : u.mode;
   const target = ({ '4k': '4K (3840×2160)', '5k': '5K', '8k': '8K', monitor: 'Maior monitor', x2: '2x', x4: '4x' } as Record<string, string>)[u.target] || u.target;
   const fmt = ({ png: 'PNG sem perdas', jpg: 'JPG 95', webp: 'WebP 95' } as Record<string, string>)[u.format] || u.format;
   const first = useThumb(files[0]);
@@ -129,11 +130,16 @@ export function UpscaleConfirm({ files, onConfirm, onClose }: { files: string[];
           {files.length > 1 && <span className="more">+{files.length - 1}</span>}
         </div>
         <dl className="confirm-list">
-          <div><dt>Tipo de imagem</dt><dd>{mode}</dd></div>
           <div><dt>Tamanho final</dt><dd>{target}</dd></div>
           <div><dt>Formato</dt><dd>{fmt}</dd></div>
           <div><dt>Já grandes</dt><dd>{u.skipIfLarger ? 'Puladas' : 'Refeitas'}</dd></div>
         </dl>
+      </div>
+      <div className="stack" style={{ gap: 8, margin: '0 22px 12px' }}>
+        <span className="small" style={{ fontWeight: 700, color: 'var(--ink-2)' }}>Que imagem é?</span>
+        <Segmented value={kind as any} onChange={(v) => setU({ mode: v })} options={[{ value: 'auto', label: 'Detectar' }, { value: 'anime', label: 'Anime' }, { value: 'render', label: 'Render 3D' }, { value: 'photo', label: 'Foto real' }, { value: 'landscape', label: 'Paisagem' }]} />
+        <span className="small" style={{ fontWeight: 700, color: 'var(--ink-2)' }}>Quanto melhorar?</span>
+        <Segmented value={(u.level || 'medium') as any} onChange={(v) => setU({ level: v, fidelity: null })} options={[{ value: 'light', label: 'Leve (mexe pouco)' }, { value: 'medium', label: 'Médio' }, { value: 'strong', label: 'Forte (lento)' }]} />
       </div>
       <p className="muted small" style={{ margin: '0 22px 6px' }}>O original nunca é alterado: a versão nova vai para a subpasta _4K. Dá para cancelar a qualquer momento na fila.</p>
       <div className="modal-foot">

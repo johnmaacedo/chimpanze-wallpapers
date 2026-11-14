@@ -14,7 +14,7 @@ let seq = 0;
 const pending = new Map();
 
 function modelPath() {
-  return app.isPackaged ? path.join(process.resourcesPath, 'models', 'lama.onnx') : path.join(__dirname, '..', '..', 'resources', 'models', 'lama.onnx');
+  return require('../models').modelPath('lama.onnx');
 }
 
 function start() {

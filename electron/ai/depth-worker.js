@@ -4,9 +4,9 @@
 const core = require('./depth-core');
 
 process.parentPort.on('message', async (e) => {
-  const { id, image, out, variant } = e.data || {};
+  const { id, image, out, variant, fix } = e.data || {};
   try {
-    const result = await core.estimate(image, out, variant || 0);
+    const result = await core.estimate(image, out, variant || 0, fix || null);
     process.parentPort.postMessage({ id, ok: true, result });
   } catch (err) {
     process.parentPort.postMessage({ id, ok: false, error: err && err.message ? err.message : String(err) });

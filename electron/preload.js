@@ -1,5 +1,5 @@
 'use strict';
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 const listeners = new Map();
 
@@ -17,4 +17,6 @@ contextBridge.exposeInMainWorld('cw', {
     };
   },
   platform: process.platform,
+  /** Path of a file dropped from Explorer (Galeria: drag pictures in). */
+  pathOf: (file) => { try { return webUtils.getPathForFile(file); } catch (_) { return ''; } },
 });

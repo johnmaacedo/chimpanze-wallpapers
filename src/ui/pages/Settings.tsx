@@ -3,6 +3,7 @@ import { FileText, ShieldOff, MessageSquare } from 'lucide-react';
 import { api, useStore, TRANSITION_LABELS, TRANSITION_LIST, TRANSITION_CATEGORIES, EASING_LABELS } from '../api';
 import { Btn, Segmented, SwitchRow } from '../components/controls';
 import { ShortcutsPanel } from '../components/ShortcutsPanel';
+import { ComponentsPanel } from '../components/ComponentsPanel';
 
 export function SettingsPage() {
   const { state, setGlobal, toast } = useStore();
@@ -108,6 +109,22 @@ export function SettingsPage() {
                 </div>
               </div>
             ))}
+          </div>
+
+          <ComponentsPanel />
+
+          <div className="panel">
+            <h3>Aparência</h3>
+            <div className="theme-cards">
+              {([['light', 'Claro', 'Branco e limpo'], ['cocoa', 'Marrom', 'O chimpanzé original'], ['dark', 'Escuro', 'Grafite neutro']] as const).map(([id, name, desc]) => (
+                <button key={id} className={`theme-card ${(g.theme || 'cocoa') === id ? 'on' : ''}`} data-preview={id} onClick={() => setGlobal({ theme: id })}>
+                  <span className="tp"><i /><i /><i /><b /></span>
+                  <span className="tn">{name}</span>
+                  <span className="td">{desc}</span>
+                </button>
+              ))}
+            </div>
+            <span className="hint">A logo e todas as telas acompanham o tema.</span>
           </div>
 
           <div className="panel">

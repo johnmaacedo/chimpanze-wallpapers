@@ -1,16 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
-import { Box, RefreshCw, RotateCcw, ScanEye, ChevronLeft } from 'lucide-react';
+import { Box, RefreshCw, RotateCcw, ScanEye, ChevronLeft, Brush } from 'lucide-react';
 import { api, useStore, mediaUrl } from '../api';
 import { Btn, Toggle } from './controls';
+import { ImageLook } from './ImageLook';
+import { CutEditor } from './CutEditor';
+import { ImageMusic } from './Music';
 
-export interface ImageDepthInfo { off: boolean; cut: number; label: string; count: number }
+export interface ImageDepthInfo { off: boolean; cut: number; label: string; count: number; fix?: boolean }
 
 /** Per-picture depth choices of a wallpaper (3D on/off, cut attempt), kept fresh with the app state. */
 export function useImageDepth(file: string | null | undefined) {
   const { state } = useStore();
   const [info, setInfo] = useState<ImageDepthInfo | null>(null);
   const entry = file ? state?.config.images?.[file.toLowerCase()] : undefined;
-  const sig = entry ? `${entry.depth}|${entry.cut}` : '';
+  const sig = entry ? `${entry.depth}|${entry.cut}|${entry.fix}` : '';
   useEffect(() => {
     if (!file) { setInfo(null); return; }
     let alive = true;
@@ -29,7 +32,10 @@ export function DepthImageControls({ file, compact, preview, onPreview }: { file
   const { state, toast } = useStore();
   const [info, setInfo] = useImageDepth(file);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
   if (!state || !state.depthModel || !info) return null;
+  const editor = editing ? <CutEditor file={file} onClose={() => setEditing(false)} onSaved={(i) => setInfo(i)} /> : null;
+
   const globalOff = !state.config.global.parallax;
   const run = async (mode: 'next' | 'prev' | 'auto') => {
     setBusy(true);
@@ -57,7 +63,11 @@ export function DepthImageControls({ file, compact, preview, onPreview }: { file
           <RefreshCw size={13} className={busy ? 'spin' : ''} /> {busy ? 'Refazendo…' : 'Refazer recorte'}
         </Btn>
         {info.cut > 0 && !busy && <Btn className="sm icon ghost" title="Voltar ao recorte automático" onClick={() => run('auto')}><RotateCcw size={13} /></Btn>}
+        {on && <Btn className="sm" onClick={() => setEditing(true)} title="Pinte você mesmo o que é personagem e o que é fundo"><Brush size={13} /> Corrigir à mão{info.fix ? ' ✓' : ''}</Btn>}
         {on && <span className="small muted ellipsis depth-img-label" title={attempt}>{attempt}</span>}
+        <ImageLook file={file} />
+        <ImageMusic file={file} />
+        {editor}
       </div>
     );
   }
@@ -84,10 +94,14 @@ export function DepthImageControls({ file, compact, preview, onPreview }: { file
               <Btn className="sm ghost grow" style={{ justifyContent: 'center' }} disabled={busy} onClick={() => run('auto')}><RotateCcw size={13} /> Automático</Btn>
             </div>
           )}
+          <Btn style={{ width: '100%', justifyContent: 'center' }} onClick={() => setEditing(true)}><Brush size={14} /> Corrigir o recorte à mão{info.fix ? ' (corrigido)' : ''}</Btn>
           {onPreview && <label className="row small muted" style={{ gap: 8 }}><Toggle on={!!preview} onChange={onPreview} label="Ver o recorte" /> Ver o recorte na imagem</label>}
           <span className="small muted">Não ficou bom? Clique em Refazer recorte de novo: cada tentativa recorta os personagens de um jeito diferente. O monitor que mostra esta imagem muda sozinho.</span>
         </>
       )}
+      <ImageLook file={file} />
+      <ImageMusic file={file} />
+      {editor}
     </div>
   );
 }

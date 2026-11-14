@@ -108,8 +108,21 @@ vec4 texAt(sampler2D tex, vec2 s, float lod, float mips) {
   return texture(tex, t);
 }
 
-// The upper lash line slides down over the eye (skin from the lids picture
-// above it), keeping its own curve: an anime blink, drawn in the picture's style.
+// Blink drawn only with the picture's own pixels (no invented skin):
+//  - the eyelid is the real skin above the lashes, stretched down like a lid closing;
+//  - the lash strokes travel with its edge; the eye stays where it is and is covered from
+//    the top, and what is left under the lashes turns into the skin below the eye once shut;
+//  - the movement fades to nothing at the corners of the eye and at the top of the lid, so
+//    there is no seam anywhere around it, and the closed line bows down like a drawn closed eye.
+vec3 eyePx(sampler2D tex, vec4 e, float cs, float sn, float ar, float u, float v, float lod, float mips) {
+  vec2 loc = vec2((u - 0.5) * 2.0 * e.z, (v - 0.5) * 2.0 * e.w);
+  vec2 q = e.xy + vec2(loc.x * cs - loc.y * sn, loc.x * sn + loc.y * cs);
+  return texAt(tex, vec2(q.x / ar, 1.0 - q.y), lod, mips).rgb;
+}
+float lashness(vec3 o) {
+  float chroma = max(o.r, max(o.g, o.b)) - min(o.r, min(o.g, o.b));
+  return (1.0 - smoothstep(0.2, 0.42, dot(o, vec3(0.299, 0.587, 0.114)))) * (1.0 - smoothstep(0.16, 0.32, chroma));
+}
 vec3 blinkAt(vec3 c, sampler2D tex, sampler2D lids, vec2 s, float lod, float mips, int which, float ar) {
   int n = which == 0 ? uFromEyes : uToEyes;
   for (int i = 0; i < 6; i++) {
@@ -124,30 +137,42 @@ vec3 blinkAt(vec3 c, sampler2D tex, sampler2D lids, vec2 s, float lod, float mip
     vec2 loc = vec2(p.x * cs + p.y * sn, -p.x * sn + p.y * cs);
     float u = loc.x / (2.0 * e.z) + 0.5;
     float v = loc.y / (2.0 * e.w) + 0.5;
-    if (u < -0.12 || u > 1.12 || v < -0.05 || v > 1.05) continue;
-    // The lash band comes down to the lower lid (about 80% down the frame).
-    float shift = k * max(0.0, 0.8 - l.y);
-    vec3 skin = textureLod(lids, clamp(vec2(s.x, 1.0 - s.y), 0.0, 1.0), 0.0).rgb;
-    vec3 o;
-    if (v < l.x) {
-      o = c; // above the lashes (brows, bangs) never changes
-    } else if (v < l.x + shift) {
-      o = skin; // the lid uncovered as the lashes come down
-    } else if (v < l.y + shift) {
-      // The lash band, taken from where it is drawn and moved down along the face.
-      vec2 src = vec2(loc.x, loc.y - shift * 2.0 * e.w);
-      vec2 q = e.xy + vec2(src.x * cs - src.y * sn, src.x * sn + src.y * cs);
-      o = texAt(tex, vec2(q.x / ar, 1.0 - q.y), lod, mips).rgb;
-      // Only the lash strokes travel: lighter bits caught in the band (iris,
-      // white of the eye, a dark but coloured iris) turn into lid skin as the eye closes.
-      float chroma = max(o.r, max(o.g, o.b)) - min(o.r, min(o.g, o.b));
-      float lashy = (1.0 - smoothstep(0.22, 0.42, dot(o, vec3(0.299, 0.587, 0.114)))) * (1.0 - smoothstep(0.18, 0.32, chroma));
-      o = mix(o, skin, (1.0 - lashy) * smoothstep(0.2, 0.8, k));
-    } else {
-      o = mix(c, skin, smoothstep(0.55, 1.0, k)); // shut: no iris left under the line
+    float v0 = l.x - 0.55; // the lid starts stretching here (skin above the eye)
+    if (u < -0.14 || u > 1.14 || v < v0 || v > 1.02) continue;
+    // Full travel in the middle of the eye, easing to none at its corners: the closed
+    // line bows down like a drawn closed eye instead of dropping as a straight bar.
+    float wu = pow(sin(3.14159265 * clamp((u + 0.14) / 1.28, 0.0, 1.0)), 0.7);
+    float shift = k * max(0.0, 0.8 - l.y) * wu;
+    if (shift < 0.0004) continue;
+    // Inside the eye from corner to corner (the white of the eye must go even where the lid barely moves).
+    float inEye = smoothstep(-0.06, 0.06, u) * smoothstep(1.06, 0.94, u);
+    float top = l.x + shift; float bot = l.y + shift;
+    if (v < top) {
+      // The lid: real skin from above the lashes, stretched down.
+      c = eyePx(tex, e, cs, sn, ar, u, v0 + (v - v0) * (l.x - v0) / (top - v0), lod, mips);
+    } else if (v < bot) {
+      // The lash band, taken from where it is drawn.
+      float sv = v - shift;
+      vec3 b = eyePx(tex, e, cs, sn, ar, u, sv, lod, mips);
+      float ly = lashness(b);
+      // Is this bit above the lash stroke (lid side) or under it (eye side)?
+      float over = 0.0; float below = 0.0;
+      for (int j = 1; j <= 5; j++) {
+        over = max(over, lashness(eyePx(tex, e, cs, sn, ar, u, mix(sv, l.x, float(j) / 5.0), lod, mips)));
+        below = max(below, lashness(eyePx(tex, e, cs, sn, ar, u, mix(sv, l.y, float(j) / 5.0), lod, mips)));
+      }
+      vec3 lidSkin = eyePx(tex, e, cs, sn, ar, u, l.x - 0.05, lod, mips);
+      vec3 cheek = eyePx(tex, e, cs, sn, ar, u, 1.08, lod, mips);
+      vec3 under = mix(c, cheek, smoothstep(0.5, 0.95, k)); // the eye, gone once shut
+      // Where no lash stroke closes the lid below (past the end of the lashes), the lid
+      // melts into what is there instead of ending in a straight edge.
+      vec3 lid = mix(lidSkin, c, smoothstep(bot - 0.1, bot, v) * (1.0 - smoothstep(0.25, 0.6, below)));
+      c = mix(mix(lid, under, smoothstep(0.25, 0.6, over)), b, ly);
+    } else if (v < 0.86) {
+      // Under the lashes, still inside the eye: covered by skin as it shuts.
+      vec3 cheek = eyePx(tex, e, cs, sn, ar, u, 1.08, lod, mips);
+      c = mix(c, cheek, smoothstep(0.75, 1.0, k) * inEye * (1.0 - lashness(c)) * (1.0 - smoothstep(0.78, 0.86, v)));
     }
-    float w = smoothstep(-0.12, 0.12, u) * smoothstep(1.12, 0.88, u) * smoothstep(1.05, 0.95, v);
-    c = mix(c, o, w);
   }
   return c;
 }

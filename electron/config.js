@@ -14,6 +14,8 @@ function defaultGlobal() {
     pauseOnMaximized: false,
     syncWindows: 'onExit', // 'onExit' | 'always' | 'never'
     uiOpacity: 1,
+    // Interface colours: 'cocoa' (marrom, padrão), 'dark' or 'light'.
+    theme: 'cocoa',
     reduceMotion: false,
     defaultTransition: 'random',
     transitionMs: 1600,
@@ -34,7 +36,9 @@ function defaultGlobal() {
     easing: 'easeInOutCubic',
     preferUpscaled: true,
     upscale: {
-      mode: 'auto', // auto | anime | photo | art
+      mode: 'auto', // auto | anime | render | photo | landscape (art = old name of render)
+      level: 'medium', // light | medium | strong
+      fidelity: null, // null = the level's own; 0..1 = how much of the original is kept
       animeModel: 'realesrgan-x4plus-anime',
       photoModel: 'ultrasharp-4x',
       artModel: 'digital-art-4x',
@@ -45,6 +49,10 @@ function defaultGlobal() {
     },
     editPresets: [],
     shortcuts: defaultShortcuts(), // global keyboard shortcuts (see shortcuts.js)
+    // Ambient music of the wallpaper on the main monitor (a YouTube video chosen per wallpaper).
+    // Wallpaper folders kept in the Galeria (besides the ones the monitors use).
+    folders: [],
+    music: { enabled: true, volume: 0.15, categories: [], follow: '' }, // follow: monitor id whose wallpaper sets the music ('' = main monitor) // categories: [{ id, name, tracks: [{ id, title, channel, length }] }]
     compactCorner: 'br',
     firstRunDone: false,
   };
@@ -172,7 +180,7 @@ class ConfigStore {
     return m;
   }
 
-  /** Per-picture depth settings: { depth: false } = 3D off, { cut: n } = cut variant. */
+  /** Per-picture settings: { depth: false } = 3D off, { cut: n } = cut variant, { look } = its own movement, { blink: false }. */
   image(file) {
     return (file && this.data.images[imageKey(file)]) || {};
   }
@@ -182,6 +190,20 @@ class ConfigStore {
     const next = Object.assign({}, this.data.images[key], patch);
     if (next.depth !== false) delete next.depth;
     if (!next.cut) delete next.cut;
+    // Own look of this wallpaper (preset, movement, strength, speed) and "never blink here".
+    if (next.look && typeof next.look === 'object') {
+      const l = {};
+      for (const k of ['parallaxPreset', 'parallaxMotion']) if (typeof next.look[k] === 'string') l[k] = next.look[k];
+      for (const k of ['parallaxStrength', 'parallaxSpeed']) if (Number.isFinite(next.look[k])) l[k] = next.look[k];
+      if (Object.keys(l).length) next.look = l; else delete next.look;
+    } else delete next.look;
+    if (next.blink !== false) delete next.blink;
+    // Its music: a YouTube video picked by the user.
+    if (next.music && typeof next.music === 'object' && /^[\w-]{11}$/.test(String(next.music.id || ''))) {
+      next.music = { id: next.music.id, title: String(next.music.title || '').slice(0, 200), channel: String(next.music.channel || '').slice(0, 120), length: String(next.music.length || '').slice(0, 12) };
+    } else delete next.music;
+    if (typeof next.musicCat !== 'string' || !next.musicCat) delete next.musicCat; // id of a music category
+    if (!next.fix) delete next.fix; // when the cut was last corrected by hand
     if (Object.keys(next).length) this.data.images[key] = next; else delete this.data.images[key];
     this.save();
     return this.image(file);

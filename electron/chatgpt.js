@@ -11,6 +11,7 @@ const { spawn, execFile } = require('child_process');
 const { app, clipboard, ClipboardItem } = require('electron');
 const { EventEmitter } = require('events');
 const log = require('./log');
+const { chatgptUi } = require('./uia');
 
 const IMG_RE = /\.(png|jpe?g|webp)$/i;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -118,7 +119,7 @@ class ChatGptBridge extends EventEmitter {
       e.notInstalled = true;
       throw e;
     }
-    const s = { source: opts.source, aspect: opts.aspect || 0, label: opts.label || '', startedAt: Date.now(), stage: 'Abrindo o ChatGPT…', known: new Set(), sentHash: '', id: Date.now() };
+    const s = { source: opts.source, sent: opts.image, aspect: opts.aspect || 0, label: opts.label || '', startedAt: Date.now(), stage: 'Abrindo o ChatGPT…', known: new Set(), sentHash: '', id: Date.now() };
     this.session = s;
     this.emit('status', this.status());
     // Remember what is already in Downloads so only new files count.
@@ -159,18 +160,67 @@ class ChatGptBridge extends EventEmitter {
       // Ctrl+N = "Novo chat" in the current app (the old one used Ctrl+Shift+O);
       // a new chat also puts the cursor in the message box.
       if (opts.newChat) await step(['CTRL', 'N'], 1800, 'Abrindo conversa nova…');
+      // The app has two tabs, Chat and Work, and only Chat makes images. It often
+      // opens on Work, so look at the window and switch before pasting anything.
+      const win = this.platform.findAppWindow(EXE_RE);
+      const look = (action) => (win ? chatgptUi(win.hwnd, action) : Promise.resolve({ ok: false }));
+      this.setStage('Conferindo a aba Chat…');
+      let ui = await look('chat');
+      if (!alive()) throw new Error('cancelado');
+      if (ui.ok && ui.chat !== 'On') {
+        // A new chat screen may still be loading: one more try before giving up.
+        await sleep(1500);
+        ui = await look('chat');
+      }
+      const tabs = ui.ok && (ui.chat !== null || ui.work !== null);
+      if (tabs && ui.chat !== 'On') {
+        await clipboard.writeText(opts.prompt);
+        this.setStage(ui.chat === null
+          ? 'Este ChatGPT está sem a aba Chat (só aparece Work), e no Work não se gera imagem. Não enviei nada. Reabra o ChatGPT e tente de novo.'
+          : 'Não consegui mudar para a aba Chat. Clique em "Chat" no topo do ChatGPT e cole a imagem (Ctrl+V); o pedido já está copiado.');
+        log.warn('chatgpt: aba Chat indisponível', ui);
+        return { auto: false, reason: 'nochat' };
+      }
+      if (ui.switched) { log.info('chatgpt: estava em Work, mudei para Chat'); await sleep(900); }
+      // Cursor in the message box (found by the window itself, not assumed).
+      if (ui.ok && ui.input) await look('focus');
       // Clear any draft left in the message box from an earlier attempt.
       await step(['CTRL', 'A'], 150);
       await step(['DELETE'], 300);
-      await step(['CTRL', 'V'], 3500, 'Colando a imagem…');
+      await step(['CTRL', 'V'], 2000, 'Colando a imagem…');
+      // "Enviar" lights up once the picture is attached: wait for that (up to
+      // ~25 s on a slow upload) instead of a fixed pause. Without the tabs
+      // (older app) there is nothing to read, so keep the old fixed wait.
+      let attached = false;
+      if (tabs) {
+        for (let i = 0; i < 12 && alive(); i++) {
+          const st = await look('look');
+          if (st.ok && st.send === true) { attached = true; break; }
+          if (!st.ok || st.send === null) break;
+          await sleep(1500);
+        }
+        // Not seen as attached: carry on anyway (the button may only light up with
+        // text), but leave a trace for when a send goes out without the picture.
+        if (!attached) log.warn('chatgpt: não vi a imagem anexar antes de colar o pedido');
+      } else await sleep(1500);
       await clipboard.writeText(opts.prompt);
       await step(['CTRL', 'V'], 800, 'Escrevendo o pedido…');
       if (opts.autoSend) {
         // Enter is ignored while the picture is still uploading, so press it a few
         // times; once sent, Enter on the empty box does nothing.
         await step(['ENTER'], 2500, 'Enviando…');
-        await step(['ENTER'], 2500);
-        await step(['ENTER'], 200);
+        if (tabs) {
+          // Sent = the box is empty again, so "Enviar" is off. Still on: press the button itself.
+          for (let i = 0; i < 4 && alive(); i++) {
+            const st = await look('look');
+            if (!st.ok || st.send !== true) break;
+            await look('send');
+            await sleep(2000);
+          }
+        } else {
+          await step(['ENTER'], 2500);
+          await step(['ENTER'], 200);
+        }
       }
       this.setStage(opts.autoSend
         ? 'Enviado. Quando a imagem ficar pronta, baixe ou copie ela no ChatGPT, e o app pega sozinho.'
@@ -239,7 +289,7 @@ class ChatGptBridge extends EventEmitter {
       const meta = await sharp(file).metadata();
       if (!meta.width || meta.width < 256) return;
       log.info('chatgpt: imagem recebida', via, file, `${meta.width}x${meta.height}`);
-      this.emit('result', { file, via, width: meta.width, height: meta.height, source: s.source, aspect: s.aspect, label: s.label });
+      this.emit('result', { file, via, width: meta.width, height: meta.height, source: s.source, painted: s.sent, aspect: s.aspect, label: s.label });
       this.setStage('Imagem recebida!');
       this.cancel();
     } catch (err) { log.warn('chatgpt: arquivo inválido', file, err.message); }

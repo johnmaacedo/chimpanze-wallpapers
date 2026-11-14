@@ -268,7 +268,7 @@ function dilate(src, W, H, r) {
  * 1 tight, 2 loose, 3 only the nearest part of the character, 4 by depth only,
  * 5 character + near objects, 6 no cut (the picture moves as one soft sheet).
  */
-async function estimate(imageFile, outFile, variant = 0) {
+async function estimate(imageFile, outFile, variant = 0, fixFile = null) {
   variant = Math.max(0, Math.min(6, Math.round(Number(variant) || 0)));
   const sharp = require('../img');
   const t0 = Date.now();
@@ -374,6 +374,22 @@ async function estimate(imageFile, outFile, variant = 0) {
     // Firm up partial values: thin objects (a sword, fingers) must not end up half
     // in each layer (that shows as a faint double).
     for (let i = 0; i < N2; i++) matte[i] = smooth(0.12, 0.6, matte[i]);
+  }
+
+  // Manual corrections painted by the user win over any automatic cut:
+  // red = this is front (character, weapon, chair), green = this is background.
+  if (fixFile) {
+    try {
+      const fx = await sharp(fixFile).resize(ow, oh, { fit: 'fill' }).removeAlpha().raw().toBuffer();
+      let add = 0;
+      for (let i = 0; i < N2; i++) {
+        const a = fx[i * 3] / 255, r = fx[i * 3 + 1] / 255;
+        if (a > 0.02) { matte[i] = Math.max(matte[i], a); add++; }
+        if (r > 0.02) matte[i] *= 1 - r;
+      }
+      // A picture that had no cut at all (landscape / single sheet) now has one.
+      if (add > N2 * 0.001 && (cut === 'paisagem' || cut === 'unica')) cut = 'manual';
+    } catch (err) { log.warn('depth: correção manual ilegível', err.message); }
   }
 
   // Hole = where the characters are (grown a few pixels so thin hair strands are

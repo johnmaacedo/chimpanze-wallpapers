@@ -3,18 +3,19 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   ImagePlus, Undo2, Redo2, Eye, Save, SlidersHorizontal, Crop, Eraser, MessageSquare, WandSparkles, Sparkles, RefreshCcw,
   Bookmark, FolderCog, RotateCw, SquareCenterlineDashedHorizontal, SquareCenterlineDashedVertical, Check, X, Copy, FolderOpen,
-  MonitorUp, ZoomIn, ZoomOut, Maximize, Download, Layers, Images, Undo, PaintBucket, Expand, TriangleAlert,
+  MonitorUp, ZoomIn, ZoomOut, Maximize, Download, Layers, Images, Undo, PaintBucket, Expand, TriangleAlert, Scan, Shrink, ChevronLeft, Aperture, Gem,
 } from 'lucide-react';
 import { api, useStore, mediaUrl, fileName, type MediaItem } from '../api';
 import { Btn, Segmented } from '../components/controls';
 import { GalleryPicker } from '../components/UpscalePicker';
 import { PasteLayerBox, PastePanel, bakeLayer, initialLayer, type Layer } from '../editor/PasteLayer';
-import { PAINT_CSS, defaultOpts, loadPix, toPng, type PasteOpts } from '../editor/composite';
+import { PAINT_CSS, PAINT_RGB, defaultOpts, loadPix, toPng, type PasteOpts } from '../editor/composite';
+import { FILMS, FILM_CATS, FILM_BY_ID, type FilmCat } from '../editor/films';
 import { EditorGL, defaultAdjust, clone, autoAdjust, curveAt, CURVE_X, LOOKS, HSL_NAMES, HSL_COLORS, type Adjust, type Crop as CropRect } from '../editor/gl';
 
-type Tool = 'adjust' | 'crop' | 'erase' | 'expand' | 'chatgpt' | 'paste';
+type Tool = 'adjust' | 'filters' | 'enhance' | 'crop' | 'erase' | 'expand' | 'chatgpt' | 'paste';
 type CgMode = 'remove' | 'enhance' | 'custom';
-/** Who makes the expansion: the local AI (FLUX Fill on the GPU) or the ChatGPT app. */
+/** Who makes the expansion: the local AI (FLUX.3 klein on the GPU) or the ChatGPT app. */
 type ExpEngine = 'local' | 'chatgpt';
 interface LocalAiStatus {
   installed: boolean; installing: boolean; running: boolean; busy: boolean;
@@ -28,7 +29,7 @@ interface Stroke { pts: [number, number][]; r: number; erase?: boolean }
 const NO_CROP: CropRect = { x: 0, y: 0, w: 1, h: 1 };
 const clampTo = (v: number, max: number) => Math.max(0, Math.min(max, v));
 
-export function EditorPage({ initialPath, clearInitial }: { initialPath: string | null; clearInitial: () => void }) {
+export function EditorPage({ initialPath, initialTool, clearInitial, onBack }: { initialPath: string | null; initialTool?: string | null; clearInitial: () => void; onBack?: () => void }) {
   const { state, toast } = useStore();
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -86,6 +87,11 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
   const [paint, setPaint] = useState<Stroke[]>([]);
   const [paintSize, setPaintSize] = useState(120);
   const [paintErase, setPaintErase] = useState(false);
+  /** "Proteger personagem": paint laid automatically over the character (a canvas in paint colour), under the strokes. */
+  const [paintMask, setPaintMask] = useState<HTMLCanvasElement | null>(null);
+  /** The character matte it came from (0-255 per pixel), kept so the margin can be changed. */
+  const matteRef = useRef<{ w: number; h: number; a: Uint8Array } | null>(null);
+  const [protectMargin, setProtectMargin] = useState(1.2);
   const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
   /** The "Pintar" brush is on in Expandir when ChatGPT makes the expansion (it must not see some parts). */
   const painting = tool === 'expand' && expEngine === 'chatgpt';
@@ -95,7 +101,13 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
     try { glRef.current = new EditorGL(canvasRef.current); } catch (err: any) { toast({ kind: 'error', title: 'Editor indisponível', message: err.message }); }
     return () => { glRef.current?.destroy(); glRef.current = null; };
   }, []);
-  useEffect(() => { if (initialPath) { open(initialPath); clearInitial(); } }, [initialPath]);
+  useEffect(() => {
+    if (!initialPath) return;
+    const t = initialTool as Tool | null | undefined;
+    // Opened from the Galeria on a given tool (Expandir, Borracha…).
+    open(initialPath).then(() => { if (t) setTool(t); });
+    clearInitial();
+  }, [initialPath]);
   useEffect(() => {
     const el = stageRef.current;
     if (!el) return;
@@ -109,7 +121,7 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
     const best = await api.invoke<string | null>('editor:bestBase', file).catch(() => null);
     setSource(file);
     await loadBase(best || file);
-    setAdj(defaultAdjust()); setUndo([]); setRedo([]); setStrokes([]); setPaint([]); setTool('adjust'); setLayer(null); setHasPaint(false);
+    setAdj(defaultAdjust()); setUndo([]); setRedo([]); setStrokes([]); setPaint([]); setPaintMask(null); matteRef.current = null; setTool('adjust'); setLayer(null); setHasPaint(false);
   };
   const loadBase = async (file: string) => {
     const gl = glRef.current;
@@ -201,8 +213,25 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && painting && paint.length && !e.shiftKey) { e.preventDefault(); setPaint((p) => p.slice(0, -1)); return; }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) doRedo(); else doUndo(); }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); doRedo(); }
-      if (e.key === '\\' && !(e.target instanceof HTMLInputElement)) setShowBefore((v) => !v);
-      const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+      const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement;
+      if (base && !typing) {
+        const ctrl = e.ctrlKey || e.metaKey;
+        let used = true;
+        if (ctrl && e.key === '0') { setZoom(1); setPan({ x: 0, y: 0 }); }
+        else if (ctrl && e.key === '1') zoomAt(1 / (view.scale || 1));
+        else if (ctrl && (e.key === '+' || e.key === '=')) zoomAt(zoom * 1.5);
+        else if (ctrl && e.key === '-') zoomAt(zoom / 1.5);
+        else if (!ctrl && !e.altKey && e.key.toLowerCase() === 'f') setFullView((v) => !v);
+        else if (fullView && e.key === 'Escape') setFullView(false);
+        else if (!ctrl && (e.key === '[' || e.key === ']')) {
+          // Brush size, as in Photoshop.
+          const f = e.key === ']' ? 1.25 : 0.8;
+          if (painting) setPaintSize((n) => Math.max(4, Math.min(2000, Math.round(n * f))));
+          else if (tool === 'erase') setBrush((n) => Math.max(6, Math.min(200, Math.round(n * f))));
+          else used = false;
+        } else used = false;
+        if (used) { e.preventDefault(); return; }
+      }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v' && base && !typing) { e.preventDefault(); importLayerClipboard(); }
       if (tool === 'paste' && layer && !typing) {
         const gl = glRef.current;
@@ -269,7 +298,7 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
   /** `expand`: the Expandir flow (its request and proportion); otherwise the "Editar com IA" tab. */
   const sendToChatGpt = async (expand: boolean) => {
     if (!base || !source) return;
-    if (paint.length) { toast({ kind: 'warn', title: 'Falta aplicar a pintura', message: 'Clique em "Aplicar pintura" antes de enviar (senão o ChatGPT vê a imagem sem ela).' }); return; }
+    if (paint.length || paintMask) { toast({ kind: 'warn', title: 'Falta aplicar a pintura', message: 'Clique em "Aplicar pintura" antes de enviar (senão o ChatGPT vê a imagem sem ela).' }); return; }
     setBusy('Preparando a imagem…');
     try {
       const file = await exportTemp();
@@ -285,6 +314,8 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
         toast({ kind: 'error', title: 'ChatGPT não instalado', message: 'Instale o aplicativo do ChatGPT para usar esta função.' });
       } else if (r && r.auto === false && r.reason === 'focus') {
         toast({ kind: 'info', title: 'Cole manualmente no ChatGPT', message: 'A janela do ChatGPT não ficou em primeiro plano. Use os botões Copiar imagem / Copiar pedido.' });
+      } else if (r && r.auto === false && r.reason === 'nochat') {
+        toast({ kind: 'warn', title: 'O ChatGPT não está na aba Chat', message: 'Nada foi enviado: no Work não se gera imagem. Clique em "Chat" no topo do ChatGPT e tente de novo.' });
       }
     } catch (err: any) {
       toast({ kind: 'error', title: 'ChatGPT', message: err.message });
@@ -295,7 +326,7 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
     if (r && source) window.dispatchEvent(new CustomEvent('chatgpt-manual', { detail: { ...r, source, aspect: expand ? expandAspect : 0, label: expand ? `Expandir ${aspectLabel}` : '' } }));
   };
 
-  // --- Local AI expansion (FLUX Fill on the GPU, through the app's own ComfyUI) --------------
+  // --- Local AI expansion (FLUX.3 klein on the GPU, through the app's own ComfyUI) --------------
   useEffect(() => api.on('localai:status', (st: LocalAiStatus) => setLocalAi(st)), []);
   useEffect(() => { if (tool === 'expand') api.invoke<LocalAiStatus>('localai:status').then(setLocalAi).catch(() => {}); }, [tool]);
   const installLocal = async () => {
@@ -331,9 +362,33 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
     setPan((p) => (z === 1 ? { x: 0, y: 0 } : { x: dx - (dx - p.x) * f, y: dy - (dy - p.y) * f }));
     setZoom(z);
   };
-  useEffect(() => { setZoom(1); setPan({ x: 0, y: 0 }); }, [base, tool]);
+  /** The preview fills the whole app window (F / button; Esc leaves). */
+  const [fullView, setFullView] = useState(false);
+  // A new picture resets the view; switching tools keeps it (it used to jump back).
+  useEffect(() => { setZoom(1); setPan({ x: 0, y: 0 }); }, [base, fullView]);
   const panDrag = useRef<{ x: number; y: number; p: { x: number; y: number } } | null>(null);
-  const canPan = zoom > 1 && (tool === 'adjust' || tool === 'chatgpt' || tool === 'paste');
+  const canPan = zoom > 1 && (tool === 'adjust' || tool === 'filters' || tool === 'enhance' || tool === 'chatgpt' || tool === 'paste');
+  // Photoshop-like: with Ctrl or Space held, dragging moves the picture whatever the tool.
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  const [ctrlHeld, setCtrlHeld] = useState(false);
+  useEffect(() => {
+    const typing = (e: KeyboardEvent) => { const t = e.target as HTMLElement | null; return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT'); };
+    const down = (e: KeyboardEvent) => {
+      if (e.key === 'Control') setCtrlHeld(true);
+      if (typing(e)) return;
+      if (e.code === 'Space') { e.preventDefault(); setSpaceHeld(true); }
+      if (e.key === '\\' && !e.repeat) setShowBefore(true);
+    };
+    const up = (e: KeyboardEvent) => {
+      if (e.key === 'Control') setCtrlHeld(false);
+      if (e.code === 'Space') setSpaceHeld(false);
+      if (e.key === '\\') setShowBefore(false);
+    };
+    const blur = () => { setCtrlHeld(false); setSpaceHeld(false); setShowBefore(false); };
+    window.addEventListener('keydown', down); window.addEventListener('keyup', up); window.addEventListener('blur', blur);
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); window.removeEventListener('blur', blur); };
+  }, []);
+  const panReady = zoom > 1 && (spaceHeld || ctrlHeld);
 
   // --- Actions ---------------------------------------------------------------
   const browse = async () => {
@@ -419,6 +474,36 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
     commit({ ...clone(adj), ...autoAdjust(gl.sample()) });
     toast({ kind: 'ok', title: 'Ajuste automático aplicado', message: 'Use Desfazer (Ctrl+Z) se não gostar.' });
   };
+  // --- Filtros (photographic looks) -----------------------------------------
+  const [filmCat, setFilmCat] = useState<FilmCat>('neg');
+  const [filmThumbs, setFilmThumbs] = useState<Record<string, string>>({});
+  const pickFilm = (id: string) => {
+    const f = FILM_BY_ID[id];
+    const fx = f?.fx || {};
+    commit({ ...adj, film: id, filmAmount: id ? (adj.film ? adj.filmAmount ?? 1 : 1) : 1, grain: fx.grain ?? 0, halation: fx.halation ?? 0, bloom: fx.bloom ?? 0, vignette: fx.vignette ?? 0 });
+  };
+  // Small live previews of each look of the open category, on the picture itself.
+  useEffect(() => {
+    const gl = glRef.current;
+    if (tool !== 'filters' || !gl || !base || !gl.width) return;
+    let alive = true;
+    const t = setTimeout(() => {
+      if (!alive) return;
+      const out: Record<string, string> = {};
+      const cv = document.createElement('canvas');
+      const baseAdj = { ...clone(adj), film: '', grain: 0, halation: 0, bloom: 0, vignette: 0 };
+      for (const f of [{ id: '', fx: {} as any }, ...FILMS.filter((x) => x.cat === filmCat)]) {
+        try {
+          const im = gl.thumb({ ...baseAdj, film: f.id, filmAmount: 1, halation: f.fx?.halation ?? 0, bloom: f.fx?.bloom ?? 0, vignette: f.fx?.vignette ?? 0 }, 132);
+          cv.width = im.width; cv.height = im.height;
+          cv.getContext('2d')!.putImageData(im, 0, 0);
+          out[f.id] = cv.toDataURL('image/jpeg', 0.8);
+        } catch (_) { /* no preview for this one */ }
+      }
+      if (alive) { setFilmThumbs(out); setLoaded((n) => n + 1); }
+    }, 60);
+    return () => { alive = false; clearTimeout(t); };
+  }, [tool, filmCat, base, adj.exposure, adj.contrast, adj.temperature, adj.saturation, adj.crop, adj.rotate, adj.flipX, adj.flipY]);
   const applyLook = (id: string) => commit({ ...defaultAdjust(), ...clone(LOOKS[id].adj), ...keepGeometry() });
   const resetAll = () => commit({ ...defaultAdjust(), ...keepGeometry() });
   /** Runs a tool that produces a new working file (eraser, upscale). */
@@ -447,9 +532,61 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
     await runOnBase('Apagando com IA…', () => api.invoke('editor:erase', base, mask));
     setStrokes([]);
   };
-  /** Pintar: the strokes burnt into the picture at full size (solid colour). */
+  /** Paint canvas from the character matte, grown by `margin` (% of the picture's width). */
+  const buildMask = (margin: number) => {
+    const m = matteRef.current;
+    if (!m) return;
+    const src = document.createElement('canvas'); src.width = m.w; src.height = m.h;
+    const sx = src.getContext('2d')!;
+    const im = sx.createImageData(m.w, m.h);
+    for (let i = 0; i < m.w * m.h; i++) { im.data[i * 4 + 3] = m.a[i] > 70 ? 255 : 0; }
+    sx.putImageData(im, 0, 0);
+    // Grow: blur the shape and keep everything the blur reached.
+    const cv = document.createElement('canvas'); cv.width = m.w; cv.height = m.h;
+    const ctx = cv.getContext('2d', { willReadFrequently: true })!;
+    const r = Math.max(0, (margin / 100) * m.w);
+    ctx.filter = r > 0.3 ? `blur(${r}px)` : 'none';
+    ctx.drawImage(src, 0, 0);
+    ctx.filter = 'none';
+    const out = ctx.getImageData(0, 0, m.w, m.h);
+    const [pr, pg, pb] = PAINT_RGB;
+    for (let i = 0; i < m.w * m.h; i++) {
+      const on = out.data[i * 4 + 3] > 22;
+      out.data[i * 4] = pr; out.data[i * 4 + 1] = pg; out.data[i * 4 + 2] = pb; out.data[i * 4 + 3] = on ? 255 : 0;
+    }
+    ctx.putImageData(out, 0, 0);
+    setPaintMask(cv);
+  };
+  /** Covers the character with paint by itself (same cut-out the 3D effect uses). */
+  const protectAuto = async () => {
+    if (!base) return;
+    setBusy('Encontrando a personagem…');
+    try {
+      const url = await api.invoke<string | null>('editor:characterMask', base);
+      if (!url) throw new Error('O modelo de recorte não está instalado.');
+      const bmp = await createImageBitmap(await (await fetch(url)).blob(), { premultiplyAlpha: 'none' });
+      const cv = document.createElement('canvas'); cv.width = bmp.width; cv.height = bmp.height;
+      const ctx = cv.getContext('2d', { willReadFrequently: true })!;
+      ctx.drawImage(bmp, 0, 0);
+      const d = ctx.getImageData(0, 0, cv.width, cv.height).data;
+      const a = new Uint8Array(cv.width * cv.height);
+      let on = 0;
+      for (let i = 0; i < a.length; i++) { a[i] = d[i * 4 + 2]; if (a[i] > 70) on++; }
+      const share = on / a.length;
+      if (share < 0.004) { toast({ kind: 'warn', title: 'Não achei personagem nesta imagem', message: 'Pinte à mão o que o ChatGPT não deve ver.' }); return; }
+      matteRef.current = { w: cv.width, h: cv.height, a };
+      buildMask(protectMargin);
+      toast(share > 0.8
+        ? { kind: 'warn', title: 'A personagem ocupa quase a imagem toda', message: 'Sobra pouco cenário para o ChatGPT continuar. Confira a pintura antes de aplicar.' }
+        : { kind: 'ok', title: 'Personagem protegida', message: 'Confira a pintura azul, ajuste com o pincel ou a borracha e clique em Aplicar pintura.' });
+    } catch (err: any) {
+      toast({ kind: 'error', title: 'Não consegui proteger sozinho', message: err.message });
+    } finally { setBusy(''); }
+  };
+  const clearPaint = () => { setPaint([]); setPaintMask(null); matteRef.current = null; };
+  /** Pintar: the automatic cover and the strokes burnt into the picture at full size (solid colour). */
   const applyPaint = async () => {
-    if (!base || !paint.length) return;
+    if (!base || (!paint.length && !paintMask)) return;
     setBusy('Pintando em resolução total…');
     try {
       const B = await loadPix(mediaUrl(base));
@@ -457,12 +594,21 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
       const ctx = oc.getContext('2d')!;
       ctx.putImageData(new ImageData(new Uint8ClampedArray(B.data), B.w, B.h), 0, 0);
       const pc = new OffscreenCanvas(B.w, B.h);
-      drawStrokes(pc.getContext('2d')!, paint, B.w, B.h, PAINT_CSS);
+      const pctx = pc.getContext('2d', { willReadFrequently: true })!;
+      if (paintMask) pctx.drawImage(paintMask, 0, 0, B.w, B.h);
+      drawStrokes(pctx, paint, B.w, B.h, PAINT_CSS);
+      if (paintMask) {
+        // The cover was enlarged from a smaller mask: make its edge hard again, so
+        // no half-transparent blue is left for the merge to mistake for scenery.
+        const im = pctx.getImageData(0, 0, B.w, B.h);
+        for (let i = 3; i < im.data.length; i += 4) im.data[i] = im.data[i] > 110 ? 255 : 0;
+        pctx.putImageData(im, 0, 0);
+      }
       ctx.drawImage(pc, 0, 0);
       const bytes = new Uint8Array(await (await oc.convertToBlob({ type: 'image/png' })).arrayBuffer());
       const out = await api.invoke<string>('editor:writeTemp', bytes);
       commit(adj, out);
-      setPaint([]);
+      clearPaint();
       setHasPaint(true);
       toast({ kind: 'ok', title: 'Pintura aplicada', message: 'Agora é só enviar para o ChatGPT. Quando a imagem voltar, o app põe o original de volta sozinho.' });
     } catch (err: any) {
@@ -593,7 +739,11 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
     cv.width = view.w; cv.height = view.h;
     const ctx = cv.getContext('2d')!;
     ctx.clearRect(0, 0, cv.width, cv.height);
-    if (painting) { drawStrokes(ctx, paint, cv.width, cv.height, PAINT_CSS); return; }
+    if (painting) {
+      if (paintMask) ctx.drawImage(paintMask, 0, 0, cv.width, cv.height);
+      drawStrokes(ctx, paint, cv.width, cv.height, PAINT_CSS);
+      return;
+    }
     if (tool !== 'erase') return;
     ctx.strokeStyle = 'rgba(255,90,120,.55)'; ctx.fillStyle = 'rgba(255,90,120,.55)'; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     for (const s of strokes) {
@@ -602,7 +752,7 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
       s.pts.forEach(([x, y], i) => (i ? ctx.lineTo(x * cv.width, y * cv.height) : ctx.moveTo(x * cv.width, y * cv.height)));
       if (s.pts.length === 1) { ctx.arc(s.pts[0][0] * cv.width, s.pts[0][1] * cv.height, s.r * cv.width, 0, Math.PI * 2); ctx.fill(); } else ctx.stroke();
     }
-  }, [strokes, paint, view, tool]);
+  }, [strokes, paint, paintMask, view, tool, painting]);
 
   const monitors = state?.monitors || [];
   const aspects = useMemo(() => [
@@ -630,6 +780,7 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
     <div className="page editor-page">
       <div className="page-head">
         <div>
+          {onBack && <button className="back-link" onClick={onBack}><ChevronLeft size={14} /> Voltar à Galeria</button>}
           <h1>Editor</h1>
           <p>
             {source
@@ -653,8 +804,16 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
 
       <div className="editor-grid">
         <div
-          className="editor-stage"
+          className={`editor-stage ${fullView ? 'full' : ''} ${panReady ? 'pan-ready' : ''}`}
           ref={stageRef}
+          onPointerDownCapture={(e) => {
+            // Ctrl/Space + drag moves the picture even with a brush or the crop box active.
+            if (panReady && e.button === 0 && !(e.target as HTMLElement).closest('.zv-tools')) {
+              e.preventDefault(); e.stopPropagation();
+              e.currentTarget.setPointerCapture(e.pointerId);
+              panDrag.current = { x: e.clientX, y: e.clientY, p: pan };
+            }
+          }}
           onWheel={(e) => { if (base) zoomAt(zoom * Math.exp(-e.deltaY * 0.0015), e.clientX, e.clientY); }}
           onPointerDown={(e) => {
             // Middle button always pans; left button pans when zoomed in on Ajustes/ChatGPT.
@@ -710,12 +869,15 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
             })()}
             {tool === 'erase' && <div className="brush-hint">Pinte por cima da marca d'água ou do objeto</div>}
           </div>
+          {base && fullView && <span className="zv-hint">Ctrl ou Espaço + arrastar: mover · roda: zoom · Ctrl+0 ajustar · Ctrl+1 tamanho real · [ ] pincel · segure \ para ver o original · Esc sair</span>}
           {base && (
             <div className="zv-tools editor-zoom" onPointerDown={(e) => e.stopPropagation()} style={{ left: 14, transform: 'none' }}>
-              <button title="Diminuir zoom" onClick={() => zoomAt(zoom / 1.5)}><ZoomOut size={14} /></button>
+              <button title="Diminuir zoom (Ctrl −)" onClick={() => zoomAt(zoom / 1.5)}><ZoomOut size={14} /></button>
               <span>{Math.round(zoom * (view.scale || 1) * 100)}%</span>
-              <button title="Aumentar zoom (roda do mouse)" onClick={() => zoomAt(zoom * 1.5)}><ZoomIn size={14} /></button>
-              <button title="Ajustar à tela" onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}><Maximize size={14} /></button>
+              <button title="Aumentar zoom (Ctrl +, ou roda do mouse)" onClick={() => zoomAt(zoom * 1.5)}><ZoomIn size={14} /></button>
+              <button title="Tamanho real 1:1 (Ctrl+1)" onClick={() => zoomAt(1 / (view.scale || 1))}><Scan size={14} /></button>
+              <button title="Ajustar à tela (Ctrl+0)" onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}><Maximize size={14} /></button>
+              <button title={fullView ? 'Sair da tela cheia (Esc)' : 'Tela cheia no app (F)'} onClick={() => setFullView((v) => !v)}>{fullView ? <Shrink size={14} /> : <Expand size={14} />}</button>
             </div>
           )}
           <AnimatePresence>
@@ -731,7 +893,7 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
         <div className="editor-side">
           <div className="tool-groups">
             {([
-              ['Imagem', [['adjust', 'Ajustes', SlidersHorizontal], ['crop', 'Recorte', Crop], ['erase', 'Borracha', Eraser]]],
+              ['Imagem', [['adjust', 'Ajustes', SlidersHorizontal], ['filters', 'Filtros', Aperture], ['enhance', 'Aprimorar', Gem], ['crop', 'Recorte', Crop], ['erase', 'Borracha', Eraser]]],
               ['Wallpaper com IA', [['expand', 'Expandir', Expand], ['chatgpt', 'Editar IA', WandSparkles], ['paste', 'Colar', Layers]]],
             ] as const).map(([group, items]) => (
               <div key={group} className="tool-group">
@@ -779,13 +941,13 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
                     options={[{ value: 'local', label: 'IA local (no PC)' }, { value: 'chatgpt', label: 'ChatGPT' }]} />
                   {expEngine === 'local' ? (
                     <div className="stack" style={{ gap: 8 }}>
-                      <span className="muted small">FLUX Fill rodando na sua placa de vídeo: sem censura, sem internet e sem precisar esconder nada. Leva cerca de 1 a 2 minutos.</span>
+                      <span className="muted small">FLUX.3 klein rodando na sua placa de vídeo: sem censura, sem internet e sem precisar esconder nada. Leva cerca de 1 minuto, e depois a sua arte original volta por cima.</span>
                       {localAi && !localAi.installed && (
                         <div className="cg-missing">
                           <b className="small">{localAi.installing ? 'Preparando a IA local…' : 'A IA local ainda não está instalada'}</b>
                           {localAi.installing
                             ? <ProgressLine stage={localAi.stage} value={localAi.progress} />
-                            : <span className="muted small">É um download único de cerca de {localAi.sizeGb || 18} GB (modelo FLUX Fill e o motor ComfyUI). Depois funciona offline.</span>}
+                            : <span className="muted small">É um download único de cerca de {localAi.sizeGb || 18} GB (modelo FLUX.3 klein e o motor ComfyUI). Depois funciona offline.</span>}
                           {localAi.error && <span className="merge-warn small"><TriangleAlert size={12} /> {localAi.error}</span>}
                           {!localAi.installing && <Btn className="sm primary" onClick={installLocal}><Download size={13} /> Baixar e preparar</Btn>}
                         </div>
@@ -811,7 +973,15 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
                     </div>
                   ) : (
                     <div className="stack" style={{ gap: 8 }}>
-                      <span className="muted small"><b>a)</b> Pinte por cima do que o ChatGPT não deve ver (ele recusa conteúdo sensível). Evite encostar a pintura na borda da imagem, quando der.</span>
+                      <span className="muted small"><b>a) Proteger.</b> O ChatGPT só precisa continuar o cenário: cubra a personagem para ele não ver (e não recusar). Depois a sua arte original volta por cima.</span>
+                      <Btn className="primary" onClick={protectAuto} disabled={!base || !!busy}><Sparkles size={15} /> {paintMask ? 'Refazer a proteção' : 'Proteger a personagem'}</Btn>
+                      {paintMask && (
+                        <label className="paste-range">
+                          <span className="row" style={{ justifyContent: 'space-between' }}><span>Folga em volta da personagem</span><b>{protectMargin.toFixed(1)}%</b></span>
+                          <input type="range" min={0} max={5} step={0.1} value={protectMargin} onChange={(e) => { const v = Number(e.target.value); setProtectMargin(v); buildMask(v); }} />
+                        </label>
+                      )}
+                      <span className="muted small">Ajuste à mão se precisar (Ctrl ou Espaço + arrastar move a imagem; <b>[</b> e <b>]</b> mudam o pincel):</span>
                       <Segmented value={paintErase ? 'erase' : 'paint'} onChange={(v) => setPaintErase(v === 'erase')} options={[{ value: 'paint', label: 'Pintar' }, { value: 'erase', label: 'Apagar pintura' }]} />
                       <label className="paste-range">
                         <span className="row" style={{ justifyContent: 'space-between' }}><span>Tamanho do pincel</span><b>{paintSize} px</b></span>
@@ -822,9 +992,9 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
                         {[20, 60, 150, 400, 900, 1600].map((n) => <button key={n} className={`chip-t ${paintSize === n ? 'on' : ''}`} onClick={() => setPaintSize(n)}>{n < 100 ? 'P' : n < 300 ? 'M' : n < 800 ? 'G' : n < 1200 ? 'GG' : 'Enorme'} {n}</button>)}
                       </div>
                       <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                        <Btn className="sm primary" onClick={applyPaint} disabled={!paint.length || !!busy}><PaintBucket size={14} /> Aplicar pintura</Btn>
+                        <Btn className="sm primary" onClick={applyPaint} disabled={(!paint.length && !paintMask) || !!busy}><PaintBucket size={14} /> Aplicar pintura</Btn>
                         <Btn className="sm" onClick={() => setPaint((p) => p.slice(0, -1))} disabled={!paint.length}><Undo size={14} /> Desfazer traço</Btn>
-                        <Btn className="sm ghost" onClick={() => setPaint([])} disabled={!paint.length}><X size={14} /> Limpar</Btn>
+                        <Btn className="sm ghost" onClick={clearPaint} disabled={!paint.length && !paintMask}><X size={14} /> Limpar</Btn>
                       </div>
                       {hasPaint && <span className="muted small"><Check size={12} style={{ verticalAlign: -2 }} /> Pintura aplicada (Ctrl+Z desfaz).</span>}
                       <span className="muted small"><b>b)</b> Envie. O app abre o ChatGPT, cola a imagem e o pedido e envia sozinho.</span>
@@ -874,7 +1044,7 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
                   <Btn className="sm" onClick={upscale} disabled={!base || !!busy}><Sparkles size={14} /> Upscale 4K</Btn>
                   <Btn className="sm ghost" onClick={resetAll} disabled={!base}><RefreshCcw size={14} /> Zerar</Btn>
                 </div>
-                <Section title="Filtros">
+                <Section title="Estilos rápidos e meus presets">
                   <div className="chips">
                     {Object.entries(LOOKS).map(([id, l]) => <button key={id} className="chip-t" onClick={() => applyLook(id)} disabled={!base}>{l.label}</button>)}
                     {presets.map((p, i) => (
@@ -933,6 +1103,58 @@ export function EditorPage({ initialPath, clearInitial }: { initialPath: string 
                   <Btn className="sm" onClick={savePreset} disabled={!base}><Bookmark size={14} /> Salvar como preset</Btn>
                   <Btn className="sm" onClick={applyToFolder} disabled={!base || !!batch}><FolderCog size={14} /> Aplicar na pasta inteira</Btn>
                 </div>
+              </>
+            )}
+
+            {tool === 'filters' && (
+              <>
+                <div className="chips">
+                  {FILM_CATS.map((c) => <button key={c.id} className={`chip-t ${filmCat === c.id ? 'on' : ''}`} onClick={() => setFilmCat(c.id)}>{c.label}</button>)}
+                </div>
+                <div className="film-grid">
+                  {[{ id: '', label: 'Sem filtro' }, ...FILMS.filter((f) => f.cat === filmCat)].map((f) => (
+                    <button key={f.id || 'none'} className={`film ${(adj.film || '') === f.id ? 'on' : ''}`} onClick={() => pickFilm(f.id)} disabled={!base}>
+                      {filmThumbs[f.id] ? <img src={filmThumbs[f.id]} alt="" draggable={false} /> : <span className="ph" />}
+                      <span className="n">{f.label}</span>
+                    </button>
+                  ))}
+                </div>
+                {adj.film && !FILMS.some((f) => f.id === adj.film && f.cat === filmCat) && <span className="muted small">Em uso: {FILM_BY_ID[adj.film]?.label}</span>}
+                <Section title="Ajuste do filtro">
+                  <Slider label="Intensidade" v={adj.filmAmount ?? 1} min={0} max={1} on={(v) => live((a) => { a.filmAmount = v; })} raw />
+                  <Slider label="Grão de filme" v={adj.grain} min={0} max={1} on={(v) => live((a) => { a.grain = v; })} />
+                  <Slider label="Halation (brilho vermelho nas luzes)" v={adj.halation || 0} min={0} max={1} on={(v) => live((a) => { a.halation = v; })} />
+                  <Slider label="Bloom (luzes que vazam)" v={adj.bloom || 0} min={0} max={1} on={(v) => live((a) => { a.bloom = v; })} />
+                  <Slider label="Vinheta" v={adj.vignette} min={0} max={1} on={(v) => live((a) => { a.vignette = v; })} />
+                </Section>
+                <span className="muted small">O filtro soma com os Ajustes (luz, cor, curvas). Segure <b>\</b> para ver o original. Duplo clique num controle zera.</span>
+                <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                  <Btn className="sm" onClick={savePreset} disabled={!base}><Bookmark size={14} /> Salvar em Meus presets</Btn>
+                  <Btn className="sm" onClick={applyToFolder} disabled={!base || !!batch}><FolderCog size={14} /> Aplicar na pasta inteira</Btn>
+                </div>
+              </>
+            )}
+
+            {tool === 'enhance' && (
+              <>
+                <span className="muted small">Melhora a imagem sem mudar o tamanho dela (não é upscale). Dê zoom em 100% (Ctrl+1) para julgar.</span>
+                <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                  <Btn className="sm" disabled={!base} onClick={() => commit({ ...adj, deblock: 0.3, nr: 0.15, nrDetail: 0.7, smartSharp: 0.25, deband: Math.max(adj.deband, 0.3) })}>Leve</Btn>
+                  <Btn className="sm" disabled={!base} onClick={() => commit({ ...adj, deblock: 0.55, nr: 0.35, nrDetail: 0.6, smartSharp: 0.4, deband: Math.max(adj.deband, 0.5) })}>Médio</Btn>
+                  <Btn className="sm" disabled={!base} onClick={() => commit({ ...adj, deblock: 0.85, nr: 0.6, nrDetail: 0.5, smartSharp: 0.55, deband: Math.max(adj.deband, 0.7) })}>Forte</Btn>
+                  <Btn className="sm ghost" disabled={!base} onClick={() => commit({ ...adj, deblock: 0, nr: 0, nrDetail: 0.5, smartSharp: 0, deband: 0 })}><RefreshCcw size={14} /> Zerar</Btn>
+                </div>
+                <Section title="Limpeza">
+                  <Slider label="Limpar artefatos de JPG" v={adj.deblock || 0} min={0} max={1} on={(v) => live((a) => { a.deblock = v; })} />
+                  <Slider label="Reduzir ruído" v={adj.nr || 0} min={0} max={1} on={(v) => live((a) => { a.nr = v; })} />
+                  <Slider label="Preservar textura" v={adj.nrDetail ?? 0.5} min={0} max={1} on={(v) => live((a) => { a.nrDetail = v; })} raw />
+                  <Slider label="Suavizar faixas em degradês" v={adj.deband} min={0} max={1} on={(v) => live((a) => { a.deband = v; })} />
+                </Section>
+                <Section title="Nitidez">
+                  <Slider label="Nitidez inteligente (só nas bordas)" v={adj.smartSharp || 0} min={0} max={1} on={(v) => live((a) => { a.smartSharp = v; })} />
+                  <Slider label="Claridade (contraste local)" v={adj.clarity} min={-1} max={1} on={(v) => live((a) => { a.clarity = v; })} />
+                </Section>
+                <span className="muted small">"Preservar textura" devolve o detalhe fino depois da limpeza, para a imagem não ficar com cara de embaçada. Segure <b>\</b> para comparar com o original.</span>
               </>
             )}
 
