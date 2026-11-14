@@ -1,39 +1,115 @@
-# Chimpanzé Wallpapers — v1.6.0
+<div align="center">
 
-Wallpapers independentes por monitor para Windows, com transições em GPU estilo motion design, profundidade 3D (parallax) com recorte por IA, personagens de anime que piscam, upscale 4K com IA e um editor de imagem. Tudo roda **local** na sua placa de vídeo.
+<img src="assets/icons/icon-cocoa.png" width="132" alt="Chimpanzé Wallpapers">
+<img src="assets/icons/icon-dark.png" width="132" alt="">
+<img src="assets/icons/icon-light.png" width="132" alt="">
 
-![logo](assets/logo.png)
+# Chimpanzé Wallpapers
 
-## Instalar (usuário)
+**Your own wallpaper studio, 100% local.**
+**Seu próprio estúdio de wallpapers, 100% local.**
 
-1. Baixe `Chimpanze-Wallpapers-Setup-1.6.0.exe` na página **[Releases](../../releases)**.
-2. Rode o instalador e siga os passos. Guia completo, passo a passo e com solução de problemas: **[docs/INSTALACAO.md](docs/INSTALACAO.md)**.
+[![Download](https://img.shields.io/github/v/release/johnmaacedo/chimpanze-wallpapers?label=download&style=for-the-badge&color=8b5a2b)](../../releases/latest)
+![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?style=for-the-badge&logo=windows)
+[![Pix](https://img.shields.io/badge/apoie-Pix-32BCAD?style=for-the-badge&logo=pix&logoColor=white)](#-apoie--support)
 
-Requisitos: Windows 10 ou 11 (64 bits), placa de vídeo com DirectX 12 (NVIDIA, AMD ou Intel) e cerca de 1,5 GB livres. A edição por IA do Editor usa o aplicativo do ChatGPT para Windows (opcional).
+[English](#english) · [Português](#português)
 
-## O que ele faz
-- **Por monitor:** pasta, timer e transição próprios; detecta monitores ao iniciar, pelo botão e ao vivo (liga/desliga cabo).
-- **75 transições WebGL2** com borrão de movimento automático, curvas de mola/Apple e compilação dos shaders em segundo plano (sem engasgos).
-- **Profundidade 3D (parallax)**, ligada por padrão:
-  - profundidade de cada imagem estimada por IA (Depth Anything V2) e personagens recortados por um modelo próprio para anime (cabelo solto, armas, grupos);
-  - o fundo atrás dos personagens é reconstruído, então nada fica borrado quando a câmera anda;
-  - **rostos rígidos:** cada cabeça é detectada e se move como uma peça só, nunca entorta;
-  - **análise automática** de cada wallpaper (anime, foto ou paisagem; quantos personagens; cabelo solto; fundo detalhado), que limita o movimento ao que a imagem aguenta sem defeitos;
-  - presets Automático, Anime, Paisagem, Pessoas reais e Manual; 7 movimentos de câmera (Órbita, Caminhada, Travelling, Aproximação, Flutuar, Respiração, Balanço);
-  - **personagens de anime piscam** de vez em quando (piscada simples, dupla e, raramente, uma piscadela), com pálpebra e cílios descendo juntos, só nos rostos em que o efeito fica natural. Tem um botão próprio ("Piscar dos olhos") e funciona mesmo com a profundidade 3D desligada.
-  - **por imagem:** dá para desligar o 3D só num wallpaper e **refazer o recorte** dos personagens (6 tentativas diferentes, com prévia do recorte na Galeria) quando a separação do fundo não ficou boa.
-- **Atalhos de teclado globais** (funcionam com o app minimizado ou na bandeja): próximo/anterior (Ctrl+Shift+N / B), fixar (Ctrl+Shift+F), pausar (Ctrl+Shift+Espaço), profundidade 3D (Ctrl+Shift+D), piscar (Ctrl+Shift+P) e mostrar o app (Ctrl+Alt+W). Agem no monitor onde está o mouse; com Alt junto, em todos. Dá para mudar cada um em Ajustes.
-- **Upscale 4K/5K/8K** (Real-ESRGAN na GPU) escolhendo imagens da galeria do app, com confirmação e comparação antes/depois.
-- **Editor:** ferramentas por etapas. **Expandir** transforma a imagem num wallpaper do formato do monitor, pela **IA local** (FLUX Fill na sua placa NVIDIA, sem internet) ou pelo **ChatGPT** (com **Pintar** para esconder o que ele não deve ver); depois o app **junta com o original** sozinho: o original volta inteiro e na resolução dele, sem marcas nem emendas em cima das pessoas. Também tem ajustes de imagem, recorte, borracha de marca d'água por IA (LaMa), edição pelo ChatGPT e **Colar** para montagens à mão.
+</div>
 
-Guia de uso de cada página: **[docs/USO.md](docs/USO.md)**.
+---
 
-## Compilar (desenvolvedor)
-Veja **[docs/COMPILAR.md](docs/COMPILAR.md)**: dependências, modelos de IA (ficam fora do Git), comandos e estrutura do código.
+## English
 
-## Modelos e licenças
-Os modelos de IA usados e suas licenças estão em **[docs/MODELOS.md](docs/MODELOS.md)**.
+Found a picture you love on the internet but it is the wrong size, blurry or has a watermark? Chimpanzé Wallpapers turns it into a beautiful wallpaper for each of your monitors: it **expands**, **upscales**, **cleans** and **animates** the image, all on your own PC. No cloud, no account, no subscription.
 
-## Arquivos do usuário
-- Configuração: `%APPDATA%\Chimpanzé Wallpapers\config.json` · Logs: `%APPDATA%\Chimpanzé Wallpapers\logs\`
-- Cache da profundidade (mapas, fundos reconstruídos, pálpebras e análise de cada imagem): `%APPDATA%\Chimpanzé Wallpapers\depth\`
+### Highlights
+- **Expand any image to your screen format.** The local expansion runs on your graphics card, with **no censorship and no content filters** from online services. Then the app merges the result back with the original, in its full resolution, without visible seams.
+- **Upscale to 4K, 5K or 8K** with models made for anime, illustrations and photos, with before/after comparison and a quick test on a piece of the image.
+- **Editor:** remove watermarks with one brush stroke, crop, adjust colors, ~46 photographic film looks, sharpen and denoise without blur, paste and align layers by hand.
+- **Living wallpapers:** 2.5D parallax depth with a moving camera, characters cut out from the background, faces that never warp and anime characters that **blink**.
+- **Per monitor:** each screen has its own folder, timer and one of **75 GPU transitions**.
+- **Gallery:** saved folders, subfolders, drag and drop from Explorer, move, delete and send to a monitor.
+- **Theme music:** pick a YouTube song (or a random playlist by category) for each wallpaper.
+- Light, dark and cocoa themes; global keyboard shortcuts; runs from the system tray using little RAM and GPU.
+
+### Requirements
+
+| | Minimum | Recommended |
+|---|---|---|
+| System | Windows 10 or 11, 64-bit | Windows 11 |
+| Graphics card | DirectX 12 (NVIDIA, AMD or Intel) | NVIDIA RTX |
+| Memory | 8 GB RAM | 16 GB RAM |
+| Disk | ~1.5 GB | ~2.2 GB with all AI packages |
+
+Optional features and what they need:
+
+| Feature | Needs | Download |
+|---|---|---|
+| 3D depth, cut-out, blinking, watermark eraser | DirectX 12 GPU | 295 MB |
+| AI upscale 4K | DirectX 12 GPU | 244 MB |
+| Magic click (select an object with one click) | any PC | 111 MB |
+| **Local expansion** (no cloud, no censorship) | NVIDIA with **12 GB VRAM**, ~12 GB of disk | inside the app |
+| Expand/edit with ChatGPT (alternative) | ChatGPT desktop app (Microsoft Store) | — |
+| Wallpaper theme music | Internet; a YouTube account is optional (Premium removes ads) | — |
+
+The installer shows these requirements and lets you choose which packages to download. Anything you skip can be downloaded later in **Settings → AI features**. Internet is only needed to download these packages and for the music.
+
+### Install
+1. Download `Chimpanze-Wallpapers-Setup-1.7.0.exe` from **[Releases](../../releases/latest)**.
+2. Run it, tick the features you want and finish. Step by step guide (Portuguese): [docs/INSTALACAO.md](docs/INSTALACAO.md).
+
+---
+
+## Português
+
+Achou uma imagem linda na internet, mas ela está no tamanho errado, borrada ou com marca d'água? O Chimpanzé Wallpapers transforma ela num wallpaper bonito para cada um dos seus monitores: ele **expande**, **aumenta a resolução**, **limpa** e **dá vida** à imagem, tudo no seu próprio PC. Sem nuvem, sem conta, sem assinatura.
+
+### Destaques
+- **Expanda qualquer imagem para o formato da sua tela.** A expansão local roda na sua placa de vídeo, **sem censura e sem filtros de conteúdo** de serviços online. Depois o app junta o resultado com o original, na resolução dele, sem emendas aparentes.
+- **Upscale para 4K, 5K ou 8K** com modelos próprios para anime, ilustração e foto, com comparação antes/depois e teste rápido num pedaço da imagem.
+- **Editor:** apague marcas d'água com uma pincelada, recorte, ajuste cores, ~46 filtros de filme fotográfico, nitidez e redução de ruído sem borrar, cole e alinhe camadas à mão.
+- **Wallpapers vivos:** profundidade 3D (parallax) com câmera em movimento, personagens recortados do fundo, rostos que nunca entortam e personagens de anime que **piscam**.
+- **Por monitor:** cada tela com pasta, timer e uma das **75 transições em GPU**.
+- **Galeria:** pastas salvas, subpastas, arrastar do Explorer, mover, excluir e mandar para um monitor.
+- **Música-tema:** escolha uma música do YouTube (ou uma lista aleatória por categoria) para cada wallpaper.
+- Temas claro, escuro e marrom; atalhos de teclado globais; fica na bandeja usando pouca RAM e GPU.
+
+### Requisitos
+
+| | Mínimo | Recomendado |
+|---|---|---|
+| Sistema | Windows 10 ou 11, 64 bits | Windows 11 |
+| Placa de vídeo | DirectX 12 (NVIDIA, AMD ou Intel) | NVIDIA RTX |
+| Memória | 8 GB de RAM | 16 GB de RAM |
+| Disco | ~1,5 GB | ~2,2 GB com todos os pacotes de IA |
+
+Recursos opcionais e o que cada um precisa:
+
+| Recurso | Precisa de | Download |
+|---|---|---|
+| Profundidade 3D, recorte, piscar, borracha de marca d'água | Placa DirectX 12 | 295 MB |
+| Upscale 4K com IA | Placa DirectX 12 | 244 MB |
+| Clique mágico (seleciona um objeto com um clique) | qualquer PC | 111 MB |
+| **Expansão local** (sem nuvem, sem censura) | NVIDIA com **12 GB de vídeo**, ~12 GB de disco | dentro do app |
+| Expandir/editar pelo ChatGPT (alternativa) | App do ChatGPT para Windows (Microsoft Store) | — |
+| Música-tema dos wallpapers | Internet; conta do YouTube opcional (o Premium tira os anúncios) | — |
+
+O instalador mostra esses requisitos e deixa você escolher quais pacotes baixar. O que você desmarcar pode ser baixado depois em **Ajustes → Recursos de IA**. A internet só é usada para baixar esses pacotes e para a música.
+
+### Instalar
+1. Baixe o `Chimpanze-Wallpapers-Setup-1.7.0.exe` na página **[Releases](../../releases/latest)**.
+2. Rode, marque os recursos que quiser e conclua. Guia passo a passo: [docs/INSTALACAO.md](docs/INSTALACAO.md). Como usar cada página: [docs/USO.md](docs/USO.md).
+
+---
+
+## 💚 Apoie / Support
+
+O Chimpanzé Wallpapers é gratuito. Se ele te ajudou e você quiser apoiar o desenvolvimento, qualquer valor é bem-vindo.
+Chimpanzé Wallpapers is free. If you enjoy it and want to support its development, any amount helps.
+
+**Pix:** _em breve / coming soon_
+
+---
+
+<sub>Para desenvolvedores / For developers: [docs/COMPILAR.md](docs/COMPILAR.md) · Modelos e licenças / Models and licenses: [docs/MODELOS.md](docs/MODELOS.md)</sub>
